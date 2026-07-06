@@ -54,8 +54,14 @@ class AI_Chatbot_Manager {
         }
 
         // 3. Generate embeddings and save to database
-        $chat_model = get_option( 'ai_chatbot_openrouter_model', 'openai/gpt-oss-120b:free' );
-        $embed_model = get_option( 'ai_chatbot_openrouter_embed_model', 'nvidia/llama-nemotron-embed-vl-1b-v2:free' );
+        $chat_model     = get_option( 'ai_chatbot_openrouter_model' );
+        if ( empty( $chat_model ) ) {
+            $chat_model = 'deepseek/deepseek-v4-flash';
+        }
+        $embed_model    = get_option( 'ai_chatbot_openrouter_embed_model' );
+        if ( empty( $embed_model ) ) {
+            $embed_model = 'qwen/qwen3-embedding-8b';
+        }
         $client = new OpenRouter_API_Client( $api_key, $chat_model, $embed_model );
         $table_chunks = $wpdb->prefix . 'ai_chatbot_chunks';
 
@@ -255,8 +261,14 @@ class AI_Chatbot_Manager {
         }
 
         // 1. Generate embedding for query
-        $chat_model = get_option( 'ai_chatbot_openrouter_model', 'openai/gpt-oss-120b:free' );
-        $embed_model = get_option( 'ai_chatbot_openrouter_embed_model', 'nvidia/llama-nemotron-embed-vl-1b-v2:free' );
+        $chat_model     = get_option( 'ai_chatbot_openrouter_model' );
+        if ( empty( $chat_model ) ) {
+            $chat_model = 'deepseek/deepseek-v4-flash';
+        }
+        $embed_model    = get_option( 'ai_chatbot_openrouter_embed_model' );
+        if ( empty( $embed_model ) ) {
+            $embed_model = 'qwen/qwen3-embedding-8b';
+        }
         $client = new OpenRouter_API_Client( $api_key, $chat_model, $embed_model );
         $query_vector = $client->get_embedding( $query );
 

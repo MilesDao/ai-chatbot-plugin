@@ -3,7 +3,7 @@
  * Plugin Name: AI Chatbot
  * Plugin URI: https://github.com/google-deepmind/ai-chatbot
  * Description: A self-contained AI Chatbot with Retrieval-Augmented Generation (RAG) powered by the Gemini API. Index local files in WordPress MySQL and query them in real-time using a beautiful glassmorphic floating widget.
- * Version: 1.0.5
+ * Version: 1.0.7
  * Author: Dao Trung
  * Text Domain: ai-chatbot
  * Requires at least: 5.8
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 // Define Constants
 define( 'AI_CHATBOT_PATH', plugin_dir_path( __FILE__ ) );
 define( 'AI_CHATBOT_URL', plugin_dir_url( __FILE__ ) );
-define( 'AI_CHATBOT_VERSION', '1.0.5' );
+define( 'AI_CHATBOT_VERSION', '1.0.7' );
 
 /**
  * Custom activation routine to create database tables for documents and chunks.
@@ -75,6 +75,7 @@ function ai_chatbot_activate() {
         session_id varchar(64) NOT NULL,
         lead_id bigint(20) DEFAULT NULL,
         lead_name varchar(255) DEFAULT '',
+        status varchar(20) DEFAULT 'bot',
         created_at datetime NOT NULL,
         updated_at datetime NOT NULL,
         PRIMARY KEY  (id),
@@ -90,6 +91,7 @@ function ai_chatbot_activate() {
         conversation_id bigint(20) NOT NULL,
         role varchar(16) NOT NULL,
         content longtext NOT NULL,
+        chat_type varchar(10) DEFAULT 'ai',
         created_at datetime NOT NULL,
         PRIMARY KEY  (id),
         KEY conversation_id (conversation_id)
@@ -149,6 +151,9 @@ class AI_Chatbot_Chatbot {
         add_action( 'wp_ajax_nopriv_ai_chatbot_save_message', array( $this, 'handle_save_message' ) );
         add_action( 'wp_ajax_ai_chatbot_get_history', array( $this, 'handle_get_history' ) );
         add_action( 'wp_ajax_nopriv_ai_chatbot_get_history', array( $this, 'handle_get_history' ) );
+
+        add_action( 'wp_ajax_ai_chatbot_switch_mode', array( $this, 'handle_switch_mode' ) );
+        add_action( 'wp_ajax_nopriv_ai_chatbot_switch_mode', array( $this, 'handle_switch_mode' ) );
     }
 
     /**
@@ -252,8 +257,10 @@ class AI_Chatbot_Chatbot {
         }
 
         // 1. Reformulate Query (Contextual Retrieval)
-        $chat_model = get_option( 'ai_chatbot_openrouter_model', 'openai/gpt-oss-120b:free' );
-        $embed_model = get_option( 'ai_chatbot_openrouter_embed_model', 'nvidia/llama-nemotron-embed-vl-1b-v2:free' );
+        $chat_model = get_option( 'ai_chatbot_openrouter_model' );
+        if ( empty($chat_model) ) $chat_model = 'deepseek/deepseek-v4-flash';
+        $embed_model = get_option( 'ai_chatbot_openrouter_embed_model' );
+        if ( empty($embed_model) ) $embed_model = 'qwen/qwen3-embedding-8b';
         $client = new OpenRouter_API_Client( $api_key, $chat_model, $embed_model );
 
         $search_query = $message;
@@ -267,48 +274,29 @@ class AI_Chatbot_Chatbot {
         $k = intval( get_option( 'ai_chatbot_top_k', '3' ) );
         $relevant_chunks = $rag_manager->search_similar_chunks( $search_query, $k );
 
-        // Use the user's requested persona prompt as default
-        $default_prompt = "HÃY ĐÓNG VAI LÀ \"ANH/CHỊ\" TRONG BAN TƯ VẤN TUYỂN SINH - MỘT NGƯỜI ANH/NGƯỜI CHỊ KHÓA TRÊN SÀNH ĐIỆU, THÂN THIỆN, THẤU HIỂU VÀ CỰC KỲ TÂM LÝ.
-
-Nhiệm vụ của bạn là lắng nghe, giải đáp thắc mắc và định hướng ngành học cho các em học sinh (gọi là \"Em\") dựa TRÊN DUY NHẤT TÀI LIỆU ĐƯỢC CUNG CẤP dưới đây.
-
-[DỮ LIỆU TRƯỜNG HỌC]
-{context}
-[/DỮ LIỆU TRƯỜNG HỌC]
-
-CHÂN DUNG & PHONG CÁCH CHAT (PERSONA):
-- Ngôn ngữ: Tự nhiên như người thật đang gõ chat, sử dụng các từ ngữ gần gũi với Gen Z nhưng vẫn giữ sự lịch sự (Ví dụ: \"Hế nhô em\", \"Chill thôi đừng lo nè\", \"Bật mí nha\", \"Chuẩn luôn\", \"Ui ngành này hot lắm á\").
-- Biểu cảm: Luôn đồng cảm với áp lực chọn ngành của học sinh. Biết khen ngợi khi học sinh chia sẻ sở thích cá nhân.
-- Tốc độ thông tin: Không trả lời nguyên một bài văn dài. Hãy ngắt dòng, chia nhỏ ý như đang nhắn tin Messenger/Zalo.
-
-QUY TẮC SỬ DỤNG EMOJI (ICON):
-- Mỗi tin nhắn chỉ dùng từ 2 - 4 emoji. Không lạm dụng icon ở mọi đầu dòng khiến rối mắt.
-- Sử dụng các icon mang tính biểu cảm, định hướng visual tốt: ✨ (nhấn mạnh điểm đặc biệt), 💡 (khi đưa ra giải pháp/gợi ý), 🎯 (mục tiêu/ngành phù hợp), 🤔 (khi cùng suy nghĩ), 🙌 hoặc 💖 (động viên/chào hỏi).
-
-NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
-1. Chỉ tư vấn thông tin có trong thẻ [DỮ LIỆU TRƯỜNG HỌC]. Tuyệt đối không tự bịa thông tin bên ngoài.
-2. Nếu dữ liệu không có, hãy trả lời khéo léo: \"Ui, cái này trong tài liệu hiện tại của anh/chị chưa cập nhật rồi 😢. Để anh/chị hỏi lại phòng tuyển sinh rồi nhắn em sau nha, hoặc em nhắn lại số điện thoại để các thầy cô gọi hỗ trợ trực tiếp nhen! 💖\"
-3. Luôn kết thúc bằng một câu hỏi gợi mở để giữ mạch trò chuyện (Ví dụ: \"Em có muốn xem thử lịch học ngành này có nặng không nè?\").";
-
-        // 2. Format custom instructions/context
-        $context_text = "";
+        // 2. Format context from database/Pinecone
+        $chunks_text = "";
         if ( ! empty( $relevant_chunks ) ) {
-            $context_text .= $default_prompt;
-            $context_text .= "\n\n=== ĐOẠN TRÍCH TÀI LIỆU LIÊN QUAN ===\n";
             foreach ( $relevant_chunks as $idx => $chunk ) {
                 $doc_name = $chunk['document_name'];
-                $context_text .= "Đoạn trích " . ($idx + 1) . " (Tệp nguồn: $doc_name):\n" . $chunk['content'] . "\n\n";
+                $chunks_text .= "Đoạn trích " . ($idx + 1) . " (Tệp nguồn: $doc_name):\n" . $chunk['content'] . "\n\n";
             }
-            $context_text .= "=== KẾT THÚC BỐI CẢNH ===\n\n";
         } else {
-            // General conversation instructions if database has no records
-            $context_text .= "Bạn là một trợ lý chatbot AI chuyên nghiệp. Tài liệu hiện tại đang trống. Hãy trả lời câu hỏi lịch sự bằng tiếng Việt và khuyên họ tải tài liệu lên trong trang quản trị để cá nhân hóa câu trả lời.";
+            $chunks_text = "Không có tài liệu nào liên quan.";
         }
 
         // Custom system prompt/persona from settings
-        $system_prompt = get_option( 'ai_chatbot_system_prompt', "Bạn là tư vấn viên vô cùng thân thiện, nhiệt tình và am hiểu của nhà trường. Nhiệm vụ của bạn là giải đáp mọi thắc mắc của sinh viên (tuyển sinh, ngành học, học phí, thủ tục, đời sống...).\n\nNGUYÊN TẮC TRẢ LỜI:\n1. Xưng hô: Xưng là 'mình' hoặc 'trường mình' và gọi người dùng là 'bạn' hoặc 'em' một cách gần gũi.\n2. Thái độ: Trả lời tự nhiên, thân thiện như một người anh/chị khóa trên. Dùng từ ngữ đệm (nhé, nha, ạ...) và thỉnh thoảng dùng emoji 😊✨.\n3. Nội dung: CHỈ dựa trên tài liệu được cung cấp. Nếu không có thông tin, hãy xin lỗi khéo léo và khuyên liên hệ Phòng Đào tạo/Hotline. Không tự bịa thông tin.\n4. Trả lời súc tích, đi thẳng vào vấn đề. Nếu câu hỏi chưa rõ, hãy nhẹ nhàng hỏi lại." );
-        $split_instruction = "QUAN TRỌNG: Để trả lời tự nhiên giống con người đang nhắn tin, hãy ngắt câu trả lời thành nhiều tin nhắn ngắn. Sử dụng CỤM TỪ <Tách box chat> giữa các phần để ngắt tin nhắn. Ví dụ:\nXin chào bạn\n<Tách box chat>\nỞ trường mình có các ngành như...\n\nCHÚ Ý: Chỉ dùng <Tách box chat> (không tự ý thay đổi).";
-        $context_text = $system_prompt . "\n\n" . $split_instruction . "\n\n" . $context_text;
+        $system_prompt = get_option( 'ai_chatbot_system_prompt', "HÃY ĐÓNG VAI LÀ \"ANH/CHỊ\" TRONG BAN TƯ VẤN TUYỂN SINH - MỘT NGƯỜI ANH/NGƯỜI CHỊ KHÓA TRÊN SÀNH ĐIỆU, THÂN THIỆN, THẤU HIỂU VÀ CỰC KỲ TÂM LÝ.\n\nNhiệm vụ của bạn là lắng nghe, giải đáp thắc mắc và định hướng ngành học cho các em học sinh (gọi là \"Em\") dựa TRÊN DUY NHẤT TÀI LIỆU ĐƯỢC CUNG CẤP dưới đây.\n\n[DỮ LIỆU TRƯỜNG HỌC]\n{context}\n[/DỮ LIỆU TRƯỜNG HỌC]\n\nCHÂN DUNG & PHONG CÁCH CHAT (PERSONA):\n- Ngôn ngữ: Tự nhiên như người thật đang gõ chat, sử dụng các từ ngữ gần gũi với Gen Z nhưng vẫn giữ sự lịch sự.\n- Biểu cảm: Luôn đồng cảm với áp lực chọn ngành của học sinh.\n- Tốc độ thông tin: Không trả lời nguyên một bài văn dài. Hãy ngắt dòng.\n\nNGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):\n1. Chỉ tư vấn thông tin có trong thẻ [DỮ LIỆU TRƯỜNG HỌC]. Tuyệt đối không tự bịa thông tin bên ngoài.\n2. Nếu dữ liệu không có, hãy trả lời khéo léo: \"Ui, câu hỏi này anh/chị chưa có thông tin chính thức rồi 😢. Để anh/chị hỏi lại phòng đào tạo rồi báo em sau nha!\"\n3. Luôn kết thúc bằng một câu hỏi gợi mở để giữ mạch trò chuyện." );
+        
+        // Inject context into the prompt
+        if ( strpos( $system_prompt, '{context}' ) !== false ) {
+            $system_prompt = str_replace( '{context}', $chunks_text, $system_prompt );
+        } else {
+            $system_prompt .= "\n\n[DỮ LIỆU TRƯỜNG HỌC]\n" . $chunks_text . "\n[/DỮ LIỆU TRƯỜNG HỌC]";
+        }
+
+        $split_instruction = "QUAN TRỌNG: Để trả lời tự nhiên giống con người đang nhắn tin, hãy ngắt câu trả lời thành nhiều tin nhắn ngắn. Sử dụng CỤM TỪ <Tách box chat> giữa các phần để ngắt tin nhắn. Ví dụ:\nXin chào bạn\n<Tách box chat>\nỞ trường mình có các ngành như...\n\nCHÚ Ý: Chỉ dùng <Tách box chat> (không tự ý thay đổi hay gõ sai chính tả).";
+        $context_text = $system_prompt . "\n\n" . $split_instruction;
 
         // History is now handled above
 
@@ -366,6 +354,7 @@ NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
         $role       = isset( $_POST['role'] ) ? sanitize_text_field( wp_unslash( $_POST['role'] ) ) : '';
         $content    = isset( $_POST['content'] ) ? wp_kses_post( wp_unslash( $_POST['content'] ) ) : '';
         $lead_name  = isset( $_POST['lead_name'] ) ? sanitize_text_field( wp_unslash( $_POST['lead_name'] ) ) : '';
+        $chat_type  = isset( $_POST['chat_type'] ) ? sanitize_text_field( wp_unslash( $_POST['chat_type'] ) ) : 'ai';
 
         if ( empty( $session_id ) || empty( $role ) || empty( $content ) ) {
             wp_send_json_error( array( 'message' => 'Missing required fields.' ) );
@@ -391,17 +380,17 @@ NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
             if ( ! empty( $lead_name ) && empty( $conversation->lead_name ) ) {
                 $wpdb->update(
                     $table_conversations,
-                    array( 'lead_name' => $lead_name, 'updated_at' => current_time( 'mysql' ) ),
+                    array( 'lead_name' => $lead_name, 'updated_at' => current_time( 'mysql' ), 'status' => $chat_type === 'human' ? 'human' : 'bot' ),
                     array( 'id' => $conversation_id ),
-                    array( '%s', '%s' ),
+                    array( '%s', '%s', '%s' ),
                     array( '%d' )
                 );
             } else {
                 $wpdb->update(
                     $table_conversations,
-                    array( 'updated_at' => current_time( 'mysql' ) ),
+                    array( 'updated_at' => current_time( 'mysql' ), 'status' => $chat_type === 'human' ? 'human' : 'bot' ),
                     array( 'id' => $conversation_id ),
-                    array( '%s' ),
+                    array( '%s', '%s' ),
                     array( '%d' )
                 );
             }
@@ -411,10 +400,11 @@ NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
                 array(
                     'session_id' => $session_id,
                     'lead_name'  => $lead_name,
+                    'status'     => $chat_type === 'human' ? 'human' : 'bot',
                     'created_at' => current_time( 'mysql' ),
                     'updated_at' => current_time( 'mysql' ),
                 ),
-                array( '%s', '%s', '%s', '%s' )
+                array( '%s', '%s', '%s', '%s', '%s' )
             );
             if ( ! $inserted ) {
                 wp_send_json_error( array( 'message' => 'Could not create conversation.' ) );
@@ -429,9 +419,10 @@ NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
                 'conversation_id' => $conversation_id,
                 'role'            => $role,
                 'content'         => $content,
+                'chat_type'       => $chat_type,
                 'created_at'      => current_time( 'mysql' ),
             ),
-            array( '%d', '%s', '%s', '%s' )
+            array( '%d', '%s', '%s', '%s', '%s' )
         );
 
         if ( ! $inserted ) {
@@ -471,7 +462,7 @@ NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
         }
 
         $messages = $wpdb->get_results( $wpdb->prepare(
-            "SELECT role, content, created_at FROM $table_messages WHERE conversation_id = %d ORDER BY created_at ASC",
+            "SELECT role, content, chat_type, created_at FROM $table_messages WHERE conversation_id = %d ORDER BY created_at ASC",
             $conversation->id
         ), ARRAY_A );
 
@@ -479,6 +470,35 @@ NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
             'messages'  => $messages,
             'lead_name' => $conversation->lead_name,
         ) );
+    }
+
+    /**
+     * AJAX handler to explicitly switch conversation mode (bot <-> human)
+     */
+    public function handle_switch_mode() {
+        if ( ! isset( $_POST['nonce'] ) || ! wp_verify_nonce( $_POST['nonce'], 'ai_chatbot_nonce' ) ) {
+            wp_send_json_error( array( 'message' => 'Security check failed.' ) );
+        }
+
+        $session_id = isset( $_POST['session_id'] ) ? sanitize_text_field( wp_unslash( $_POST['session_id'] ) ) : '';
+        $mode       = isset( $_POST['mode'] ) ? sanitize_text_field( wp_unslash( $_POST['mode'] ) ) : '';
+
+        if ( empty( $session_id ) || ! in_array( $mode, array( 'bot', 'human' ), true ) ) {
+            wp_send_json_error( array( 'message' => 'Invalid parameters.' ) );
+        }
+
+        global $wpdb;
+        $table_conversations = $wpdb->prefix . 'ai_chatbot_conversations';
+        
+        $wpdb->update(
+            $table_conversations,
+            array( 'status' => $mode, 'updated_at' => current_time( 'mysql' ) ),
+            array( 'session_id' => $session_id ),
+            array( '%s', '%s' ),
+            array( '%s' )
+        );
+
+        wp_send_json_success();
     }
 }
 

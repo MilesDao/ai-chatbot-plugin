@@ -14,11 +14,24 @@ jQuery(document).ready(function($) {
         var bubble = $('#' + id + '-trigger');
         var chatWindow = $('#' + id + '-window');
         var minimizeBtn = $('#' + id + '-minimize');
+        
+        // Views
+        var viewAI = $('#' + id + '-view-ai');
+        var viewHuman = $('#' + id + '-view-human');
+        
+        // AI elements
         var messagesViewport = $('#' + id + '-messages');
         var chatForm = $('#' + id + '-form');
         var inputField = $('#' + id + '-input');
         var submitBtn = $('#' + id + '-submit');
-        var inputArea = container.find('.ai_chatbot-chat-input-area');
+        var inputArea = $('#' + id + '-input-area');
+        
+        // Human elements
+        var humanMessagesViewport = $('#' + id + '-human-messages');
+        var humanForm = $('#' + id + '-human-form');
+        var humanInput = $('#' + id + '-human-input');
+        var humanSubmit = $('#' + id + '-human-submit');
+        var btnBackAI = $('#' + id + '-back-ai');
         
         // Lead capture selectors
         var leadOverlay = $('#' + id + '-lead-overlay');
@@ -30,6 +43,11 @@ jQuery(document).ready(function($) {
         var hasLeadSubmitted = false;
         var leadName = '';
         var requireLeadForm = true;
+        
+        // Modes & Polling
+        var currentMode = 'bot';
+        var humanPollingInterval = null;
+        var loadedHistoryCount = 0;
         
         // Session / Conversation persistence
         var sessionId = '';
@@ -46,14 +64,53 @@ jQuery(document).ready(function($) {
             sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
         }
 
+        // Mode Switching
+        function switchMode(mode) {
+            currentMode = mode;
+            var ajaxUrl = (typeof aiChatbotVars !== 'undefined' && aiChatbotVars.ajax_url) ? aiChatbotVars.ajax_url : '/wp-admin/admin-ajax.php';
+            var nonceValue = (typeof aiChatbotVars !== 'undefined' && aiChatbotVars.nonce) ? aiChatbotVars.nonce : '';
+
+            $.post(ajaxUrl, { action: 'ai_chatbot_switch_mode', nonce: nonceValue, session_id: sessionId, mode: mode });
+
+            if (mode === 'human') {
+                viewAI.hide().addClass('ai_chatbot-hidden');
+                viewHuman.show().removeClass('ai_chatbot-hidden');
+                scrollToBottom(false, 'human');
+                if (!humanPollingInterval) {
+                    humanPollingInterval = setInterval(loadHistory, 4000);
+                }
+            } else {
+                viewHuman.hide().addClass('ai_chatbot-hidden');
+                viewAI.show().removeClass('ai_chatbot-hidden');
+                scrollToBottom(false, 'ai');
+                if (humanPollingInterval) {
+                    clearInterval(humanPollingInterval);
+                    humanPollingInterval = null;
+                }
+            }
+        }
+        
+        chatWindow.on('click', '.ai_chatbot-btn-takeover', function(e) {
+            e.preventDefault();
+            switchMode('human');
+            
+            // Hide the banner if they clicked it
+            var takeoverBanner = $('#' + id + '-takeover-banner');
+            if (takeoverBanner.length) {
+                takeoverBanner.hide();
+            }
+        });
+        
+        btnBackAI.on('click', function(e) {
+            e.preventDefault();
+            switchMode('bot');
+        });
+
         // Persist a message to the backend
-        function saveMessage(role, content) {
-            var ajaxUrl = (typeof aiChatbotVars !== 'undefined' && aiChatbotVars.ajax_url) 
-                ? aiChatbotVars.ajax_url 
-                : (window.ajaxurl || '/wp-admin/admin-ajax.php');
-            var nonceValue = (typeof aiChatbotVars !== 'undefined' && aiChatbotVars.nonce) 
-                ? aiChatbotVars.nonce 
-                : '';
+        function saveMessage(role, content, chatType) {
+            chatType = chatType || 'ai';
+            var ajaxUrl = (typeof aiChatbotVars !== 'undefined' && aiChatbotVars.ajax_url) ? aiChatbotVars.ajax_url : '/wp-admin/admin-ajax.php';
+            var nonceValue = (typeof aiChatbotVars !== 'undefined' && aiChatbotVars.nonce) ? aiChatbotVars.nonce : '';
             try {
                 $.ajax({
                     url: ajaxUrl,
@@ -64,7 +121,8 @@ jQuery(document).ready(function($) {
                         session_id: sessionId,
                         role: role,
                         content: content,
-                        lead_name: leadName
+                        lead_name: leadName,
+                        chat_type: chatType
                     },
                     async: true
                 });
@@ -75,12 +133,8 @@ jQuery(document).ready(function($) {
 
         // Load conversation history from backend
         function loadHistory() {
-            var ajaxUrl = (typeof aiChatbotVars !== 'undefined' && aiChatbotVars.ajax_url) 
-                ? aiChatbotVars.ajax_url 
-                : (window.ajaxurl || '/wp-admin/admin-ajax.php');
-            var nonceValue = (typeof aiChatbotVars !== 'undefined' && aiChatbotVars.nonce) 
-                ? aiChatbotVars.nonce 
-                : '';
+            var ajaxUrl = (typeof aiChatbotVars !== 'undefined' && aiChatbotVars.ajax_url) ? aiChatbotVars.ajax_url : '/wp-admin/admin-ajax.php';
+            var nonceValue = (typeof aiChatbotVars !== 'undefined' && aiChatbotVars.nonce) ? aiChatbotVars.nonce : '';
 
             $.ajax({
                 url: ajaxUrl,
@@ -96,59 +150,58 @@ jQuery(document).ready(function($) {
                     }
                     if (response && response.success && response.data && response.data.messages) {
                         var msgs = response.data.messages;
-                        // Remove welcome message placeholder if we have history
-                        if (msgs.length > 0) {
-                            messagesViewport.find('.ai_chatbot-msg-wrapper.bot:first').remove();
-                        }
-                        $.each(msgs, function(i, msg) {
-                            var sender = msg.role === 'user' ? 'user' : 'bot';
+                        
+                        if (msgs.length > loadedHistoryCount) {
+                            if (loadedHistoryCount === 0 && msgs.length > 0) {
+                                // Remove AI welcome placeholder on first load
+                                messagesViewport.find('.ai_chatbot-msg-wrapper.bot:first').remove();
+                            }
                             
-                            // Format database timestamp YYYY-MM-DD HH:MM:SS to HH:MM
-                            var msgTime = '';
-                            if (msg.created_at) {
-                                var parts = msg.created_at.split(' ');
-                                if (parts.length > 1) {
-                                    var timeParts = parts[1].split(':');
-                                    if (timeParts.length > 1) {
-                                        msgTime = timeParts[0] + ':' + timeParts[1];
+                            var newMsgs = msgs.slice(loadedHistoryCount);
+                            $.each(newMsgs, function(i, msg) {
+                                var sender = msg.role === 'user' ? 'user' : 'bot';
+                                var msgMode = msg.chat_type === 'human' ? 'human' : 'ai';
+                                
+                                var msgTime = '';
+                                if (msg.created_at) {
+                                    var parts = msg.created_at.split(' ');
+                                    if (parts.length > 1) {
+                                        var timeParts = parts[1].split(':');
+                                        if (timeParts.length > 1) {
+                                            msgTime = timeParts[0] + ':' + timeParts[1];
+                                        }
                                     }
                                 }
-                            }
+                                
+                                if (sender === 'bot' && msgMode === 'ai') {
+                                    var splitParts = msg.content.split(/<tách box chat>/i);
+                                    $.each(splitParts, function(j, part) {
+                                        var partText = part.trim();
+                                        if (partText) {
+                                            var html = parseMarkdown(partText);
+                                            appendMessage(html, sender, true, msgTime, msgMode);
+                                        }
+                                    });
+                                } else {
+                                    var html = parseMarkdown(msg.content);
+                                    appendMessage(html, sender, true, msgTime, msgMode);
+                                }
+                            });
                             
-                            if (sender === 'bot') {
-                                var splitParts = msg.content.split(/<tách box chat>/i);
-                                $.each(splitParts, function(j, part) {
-                                    var partText = part.trim();
-                                    if (partText) {
-                                        var html = parseMarkdown(partText);
-                                        appendMessage(html, sender, true, msgTime);
-                                    }
-                                });
-                            } else {
-                                var html = parseMarkdown(msg.content);
-                                appendMessage(html, sender, true, msgTime);
-                            }
-                        });
-                        scrollToBottom(false);
+                            loadedHistoryCount = msgs.length;
+                            scrollToBottom(false, 'ai');
+                            scrollToBottom(false, 'human');
+                        }
                     }
                 }
             });
         }
 
         try {
-            hasLeadSubmitted = localStorage.getItem('ai_chatbot_lead_submitted') === 'true';
-            leadName = localStorage.getItem('ai_chatbot_lead_name') || '';
-        } catch(e) {
-            console.warn("AI Chatbot: localStorage is blocked or unsupported in this browser environment.", e);
-        }
-
-        try {
             if (typeof aiChatbotVars !== 'undefined' && aiChatbotVars.require_lead !== undefined) {
                 requireLeadForm = aiChatbotVars.require_lead === '1';
             }
-        } catch(e) {
-            console.warn("AI Chatbot: aiChatbotVars is not enqueued.", e);
-        }
+        } catch(e) {}
 
         if (requireLeadForm && !hasLeadSubmitted) {
             leadOverlay.removeClass('ai_chatbot-hidden').show();
@@ -161,7 +214,6 @@ jQuery(document).ready(function($) {
             inputField.prop('disabled', false);
             submitBtn.prop('disabled', false);
             
-            // Personalize initial greeting on page load if user name exists in storage
             if (leadName) {
                 var nameParts = leadName.trim().split(/\s+/);
                 var firstName = nameParts.length > 0 ? nameParts[nameParts.length - 1] : '';
@@ -172,12 +224,12 @@ jQuery(document).ready(function($) {
             }
         }
 
-        // Load history on page load (after a short delay for inline layouts)
+        // Load history on page load
         if (sessionId) {
             setTimeout(function() { loadHistory(); }, 100);
         }
 
-        // Bind Lead Form Submit
+        // Lead Form Submit
         leadForm.on('submit', function(e) {
             e.preventDefault();
             
@@ -193,14 +245,8 @@ jQuery(document).ready(function($) {
             leadSubmit.prop('disabled', true).text('Đang xử lý...');
             leadError.hide();
             
-            // Safe fallback for AJAX URL and Nonce if variables are missing
-            var ajaxUrl = (typeof aiChatbotVars !== 'undefined' && aiChatbotVars.ajax_url) 
-                ? aiChatbotVars.ajax_url 
-                : (window.ajaxurl || '/wp-admin/admin-ajax.php');
-                
-            var nonceValue = (typeof aiChatbotVars !== 'undefined' && aiChatbotVars.nonce) 
-                ? aiChatbotVars.nonce 
-                : '';
+            var ajaxUrl = (typeof aiChatbotVars !== 'undefined' && aiChatbotVars.ajax_url) ? aiChatbotVars.ajax_url : '/wp-admin/admin-ajax.php';
+            var nonceValue = (typeof aiChatbotVars !== 'undefined' && aiChatbotVars.nonce) ? aiChatbotVars.nonce : '';
             
             try {
                 $.ajax({
@@ -214,13 +260,8 @@ jQuery(document).ready(function($) {
                         phone: phoneValue
                     },
                     success: function(response) {
-                        // Safe JSON parse fallback if response is returned as string
                         if (typeof response === 'string') {
-                            try {
-                                response = JSON.parse(response);
-                            } catch(e) {
-                                console.warn("Failed to parse lead submit response as JSON:", e);
-                            }
+                            try { response = JSON.parse(response); } catch(e) {}
                         }
                         
                         if (response && response.success) {
@@ -230,11 +271,8 @@ jQuery(document).ready(function($) {
                                     localStorage.setItem('ai_chatbot_lead_name', nameValue);
                                     leadName = nameValue;
                                 }
-                            } catch(e) {
-                                console.warn("AI Chatbot: Failed to save submission in localStorage.", e);
-                            }
+                            } catch(e) {}
                             
-                            // Extract Vietnamese first name (last word of the full name)
                             var firstName = 'bạn';
                             if (nameValue) {
                                 var nameParts = nameValue.trim().split(/\s+/);
@@ -243,16 +281,14 @@ jQuery(document).ready(function($) {
                                 }
                             }
                             
-                            // Dynamic personalized initial greeting bubble update
                             var welcomeGreeting = 'Trường Cao đẳng Kinh tế Công nghệ Hà Nội xin chào ' + firstName + '! Chúng tôi có thể giúp gì cho bạn hôm nay?';
                             messagesViewport.find('.ai_chatbot-msg-wrapper.bot:first .ai_chatbot-msg-bubble p').text(welcomeGreeting);
                             
-                            // Persist the bot welcome message
                             setTimeout(function() {
-                                saveMessage('bot', welcomeGreeting);
+                                saveMessage('bot', welcomeGreeting, 'ai');
+                                // Only increment local history count if we append directly, but we let polling/reload handle it later
                             }, 200);
 
-                            // Elegant fade-out via class transition to avoid click-blocking
                             leadOverlay.addClass('ai_chatbot-hidden');
                             setTimeout(function() {
                                 leadOverlay.hide();
@@ -270,20 +306,17 @@ jQuery(document).ready(function($) {
                             leadSubmit.prop('disabled', false).text('Bắt đầu tư vấn');
                         }
                     },
-                    error: function(xhr, status, error) {
-                        console.error("AI Chatbot AJAX error:", status, error, xhr.responseText);
+                    error: function() {
                         leadError.text('Có lỗi kết nối hệ thống. Vui lòng thử lại.').show();
                         leadSubmit.prop('disabled', false).text('Bắt đầu tư vấn');
                     }
                 });
             } catch (err) {
-                console.error("Lead form submit crash:", err);
                 leadError.text('Đã xảy ra lỗi ngoài ý muốn. Vui lòng tải lại trang.').show();
                 leadSubmit.prop('disabled', false).text('Bắt đầu tư vấn');
             }
         });
         
-        // 1. Floating trigger toggles (Only for non-inline layouts)
         if (!isInline) {
             bubble.on('click', function(e) {
                 e.stopPropagation();
@@ -299,31 +332,26 @@ jQuery(document).ready(function($) {
                 closeChat();
             });
             
-            // Close floating widget on escape key
             $(document).on('keyup', function(e) {
                 if (e.key === "Escape" && !chatWindow.hasClass('ai_chatbot-state-closed')) {
                     closeChat();
                 }
             });
 
-            // Prevent clicks inside window from bubbling and closing it
-            chatWindow.on('click', function(e) {
-                e.stopPropagation();
-            });
+            chatWindow.on('click', function(e) { e.stopPropagation(); });
         }
         
         function openChat() {
             chatWindow.removeClass('ai_chatbot-state-closed');
             bubble.find('.icon-open').hide();
             bubble.find('.icon-close').show();
-            bubble.find('.ai_chatbot-pulse-dot').fadeOut(300); // hide notification dot once clicked
+            bubble.find('.ai_chatbot-pulse-dot').fadeOut(300);
             
-            // Focus input field on slide up completion
             setTimeout(function() {
-                inputField.focus();
+                if (currentMode === 'ai') inputField.focus();
+                else humanInput.focus();
             }, 300);
-            
-            scrollToBottom(true);
+            scrollToBottom(true, currentMode);
         }
         
         function closeChat() {
@@ -332,56 +360,40 @@ jQuery(document).ready(function($) {
             bubble.find('.icon-open').show();
         }
         
-        // 2. Message submission handler
+        // AI Chat Form Submit
         chatForm.on('submit', function(e) {
             e.preventDefault();
-            
             var userText = inputField.val().trim();
-            if (!userText) {
-                return;
-            }
+            if (!userText) return;
             
-            // Disable input and clear
             inputField.val('');
             inputField.prop('disabled', true);
             submitBtn.prop('disabled', true);
             
-            // Append User Message to Viewport
-            appendMessage(userText, 'user');
-            scrollToBottom(true);
+            appendMessage(userText, 'user', false, '', 'ai');
+            scrollToBottom(true, 'ai');
             
-            // Persist user message
-            saveMessage('user', userText);
+            saveMessage('user', userText, 'ai');
+            loadedHistoryCount++; // increment to account for user msg just saved
             
-            // Append Bot Typing Indicator
             appendTypingIndicator();
-            scrollToBottom(true);
+            scrollToBottom(true, 'ai');
             
-            // Safe fallback for AJAX URL and Nonce if variables are missing
-            var ajaxUrl = (typeof aiChatbotVars !== 'undefined' && aiChatbotVars.ajax_url) 
-                ? aiChatbotVars.ajax_url 
-                : (window.ajaxurl || '/wp-admin/admin-ajax.php');
-                
-            var nonceValue = (typeof aiChatbotVars !== 'undefined' && aiChatbotVars.nonce) 
-                ? aiChatbotVars.nonce 
-                : '';
+            var ajaxUrl = (typeof aiChatbotVars !== 'undefined' && aiChatbotVars.ajax_url) ? aiChatbotVars.ajax_url : '/wp-admin/admin-ajax.php';
+            var nonceValue = (typeof aiChatbotVars !== 'undefined' && aiChatbotVars.nonce) ? aiChatbotVars.nonce : '';
 
             try {
-                // Prepare form data for fetch
                 var formData = new FormData();
                 formData.append('action', 'ai_chatbot_chat_query');
                 formData.append('message', userText);
                 formData.append('session_id', sessionId);
                 formData.append('nonce', nonceValue);
 
-                // Send request using fetch to read stream
                 fetch(ajaxUrl, {
                     method: 'POST',
                     body: formData
                 }).then(async response => {
-                    if (!response.ok) {
-                        throw new Error('Network response was not ok');
-                    }
+                    if (!response.ok) throw new Error('Network response was not ok');
                     
                     removeTypingIndicator();
                     
@@ -389,8 +401,6 @@ jQuery(document).ready(function($) {
                     var decoder = new TextDecoder("utf-8");
                     var fullAnswer = "";
                     var currentBoxHTML = "";
-                    
-                    // We need to keep track of the current message bubble element being written to
                     var currentMsgBubble = null;
                     
                     while (true) {
@@ -398,36 +408,29 @@ jQuery(document).ready(function($) {
                         if (done) break;
                         
                         var chunk = decoder.decode(value, { stream: true });
-                        
-                        // Try to parse the chunk as a plain JSON error object (in case backend or API fails without streaming)
                         try {
                             var parsedJson = JSON.parse(chunk.trim());
                             if (parsedJson.success === false && parsedJson.data && parsedJson.data.message) {
-                                appendMessage('<p style="color: #ef4444; font-weight: 500;">Lỗi: ' + parsedJson.data.message + '</p>', 'bot', true);
+                                appendMessage('<p style="color: #ef4444; font-weight: 500;">Lỗi: ' + parsedJson.data.message + '</p>', 'bot', true, '', 'ai');
                                 fullAnswer = "[Lỗi hệ thống]";
                                 break;
                             } else if (parsedJson.error && parsedJson.error.message) {
-                                appendMessage('<p style="color: #ef4444; font-weight: 500;">Lỗi AI Model: ' + parsedJson.error.message + '</p>', 'bot', true);
+                                appendMessage('<p style="color: #ef4444; font-weight: 500;">Lỗi AI Model: ' + parsedJson.error.message + '</p>', 'bot', true, '', 'ai');
                                 fullAnswer = "[Lỗi AI Model]";
                                 break;
                             }
-                        } catch (e) {
-                            // Not a plain JSON error object, proceed with SSE parsing
-                        }
+                        } catch (e) {}
                         
                         var lines = chunk.split('\n');
-                        
                         for (var i = 0; i < lines.length; i++) {
                             var line = lines[i].trim();
                             if (line.startsWith('data: ')) {
                                 var dataStr = line.substring(6).trim();
-                                if (dataStr === '[DONE]') {
-                                    continue;
-                                }
+                                if (dataStr === '[DONE]') continue;
                                 if (dataStr.startsWith('[ERROR]')) {
                                     if (!currentMsgBubble) {
-                                        appendMessage('<p style="color: #ef4444; font-weight: 500;">' + dataStr + '</p>', 'bot', true);
-                                        currentMsgBubble = messagesViewport.find('.ai_chatbot-msg-wrapper.bot:last .ai_chatbot-msg-bubble');
+                                        appendMessage('<p style="color: #ef4444; font-weight: 500;">' + dataStr + '</p>', 'bot', true, '', 'ai');
+                                        currentMsgBubble = messagesViewport.find('.ai_chatbot-msg-wrapper.bot:not(.ai_chatbot-typing-loader):last .ai_chatbot-msg-bubble');
                                     }
                                     continue;
                                 }
@@ -438,13 +441,9 @@ jQuery(document).ready(function($) {
                                         var deltaText = dataObj.choices[0].delta.content;
                                         fullAnswer += deltaText;
                                         
-                                        // Handle <tách box chat> dynamically
                                         if (fullAnswer.toLowerCase().includes('<tách box chat>')) {
                                             var parts = fullAnswer.split(/<tách box chat>/i);
-                                            // The last part is the currently growing one
                                             var latestPart = parts[parts.length - 1];
-                                            
-                                            // If we just detected a split, create a new bubble for the new part
                                             if (parts.length > 1 && deltaText.toLowerCase().includes('chat>')) {
                                                 currentMsgBubble = null;
                                             }
@@ -454,61 +453,78 @@ jQuery(document).ready(function($) {
                                         }
                                         
                                         if (!currentMsgBubble) {
-                                            // Create a new empty bubble and save its reference
-                                            appendMessage('', 'bot', false); // Note: false means no animation here to avoid jumps
-                                            currentMsgBubble = messagesViewport.find('.ai_chatbot-msg-wrapper.bot:last .ai_chatbot-msg-bubble');
+                                            appendMessage('', 'bot', false, '', 'ai');
+                                            currentMsgBubble = messagesViewport.find('.ai_chatbot-msg-wrapper.bot:not(.ai_chatbot-typing-loader):last .ai_chatbot-msg-bubble');
                                         }
                                         
                                         currentMsgBubble.html(currentBoxHTML);
-                                        scrollToBottom(false);
+                                        scrollToBottom(false, 'ai');
                                     }
-                                } catch (err) {
-                                    console.warn("Parse error for chunk:", dataStr, err);
-                                }
+                                } catch (err) {}
                             }
                         }
                     }
                     
-                    // Finalize
                     inputField.prop('disabled', false).focus();
                     submitBtn.prop('disabled', false);
-                    saveMessage('bot', fullAnswer);
-                    scrollToBottom(true);
+                    saveMessage('bot', fullAnswer, 'ai');
+                    loadedHistoryCount++;
+                    
+                    // Show fixed suggestion banner
+                    var takeoverBanner = $('#' + id + '-takeover-banner');
+                    if (takeoverBanner.length) {
+                        takeoverBanner.fadeIn(300);
+                    }
                     
                 }).catch(error => {
-                    console.error("AI Chatbot Fetch error:", error);
                     removeTypingIndicator();
                     inputField.prop('disabled', false).focus();
                     submitBtn.prop('disabled', false);
-                    appendMessage('<p style="color: #ef4444; font-weight: 500;">Có lỗi kết nối hệ thống. Vui lòng thử lại.</p>', 'bot', true);
-                    scrollToBottom(true);
+                    appendMessage('<p style="color: #ef4444; font-weight: 500;">Có lỗi kết nối hệ thống. Vui lòng thử lại.</p>', 'bot', true, '', 'ai');
+                    scrollToBottom(true, 'ai');
                 });
             } catch (err) {
-                console.error("Chat form submit crash:", err);
                 removeTypingIndicator();
                 inputField.prop('disabled', false).focus();
                 submitBtn.prop('disabled', false);
-                appendMessage('<p style="color: #ef4444; font-weight: 500;">Đã xảy ra lỗi ngoài ý muốn. Vui lòng tải lại trang.</p>', 'bot', true);
+                appendMessage('<p style="color: #ef4444; font-weight: 500;">Đã xảy ra lỗi ngoài ý muốn. Vui lòng tải lại trang.</p>', 'bot', true, '', 'ai');
             }
         });
+
+        // Human Chat Form Submit
+        humanForm.on('submit', function(e) {
+            e.preventDefault();
+            var userText = humanInput.val().trim();
+            if (!userText) return;
+
+            humanInput.val('');
+            appendMessage(userText, 'user', false, '', 'human');
+            scrollToBottom(true, 'human');
+            
+            saveMessage('user', userText, 'human');
+            loadedHistoryCount++;
+        });
         
-        // 3. Helper to append speech bubble
-        function appendMessage(content, sender, isHTML, time) {
+        // Helper to append speech bubble
+        function appendMessage(content, sender, isHTML, time, mode) {
+            mode = mode || 'ai';
             var timeString = time || getCurrentTime();
             var bubbleContent = isHTML ? content : escapeHtml(content);
             
-            var msgHtml = 
-                '<div class="ai_chatbot-msg-wrapper ' + sender + '">' +
-                    '<div class="ai_chatbot-msg-bubble">' +
-                        (isHTML ? bubbleContent : '<p>' + bubbleContent + '</p>') +
-                    '</div>' +
-                    '<span class="ai_chatbot-msg-time">' + timeString + '</span>' +
-                '</div>';
+            // Do not wrap the suggestion button in a bubble
+            var isSuggestion = content.indexOf('ai_chatbot-takeover-suggestion') !== -1;
+            var innerHtml = isSuggestion ? content : ('<div class="ai_chatbot-msg-bubble">' + (isHTML ? bubbleContent : '<p>' + bubbleContent + '</p>') + '</div><span class="ai_chatbot-msg-time">' + timeString + '</span>');
+            
+            var msgHtml = '<div class="ai_chatbot-msg-wrapper ' + sender + '">' + innerHtml + '</div>';
                 
-            messagesViewport.append(msgHtml);
+            if (mode === 'human') {
+                humanMessagesViewport.append(msgHtml);
+            } else {
+                messagesViewport.append(msgHtml);
+            }
         }
         
-        // 4. Typing loader helpers
+        // Typing loader helpers
         function appendTypingIndicator() {
             var loaderHtml = 
                 '<div class="ai_chatbot-msg-wrapper bot ai_chatbot-typing-loader">' +
@@ -527,17 +543,18 @@ jQuery(document).ready(function($) {
             messagesViewport.find('.ai_chatbot-typing-loader').remove();
         }
         
-        // 5. Scroll conversation to bottom
-        function scrollToBottom(animate) {
-            var scrollHeight = messagesViewport[0].scrollHeight;
+        // Scroll conversation to bottom
+        function scrollToBottom(animate, mode) {
+            mode = mode || 'ai';
+            var vp = mode === 'human' ? humanMessagesViewport : messagesViewport;
+            var scrollHeight = vp[0].scrollHeight;
             if (animate) {
-                messagesViewport.animate({ scrollTop: scrollHeight }, 300);
+                vp.animate({ scrollTop: scrollHeight }, 300);
             } else {
-                messagesViewport.scrollTop(scrollHeight);
+                vp.scrollTop(scrollHeight);
             }
         }
         
-        // 6. Time retriever
         function getCurrentTime() {
             var now = new Date();
             var hours = now.getHours().toString().padStart(2, '0');
@@ -545,42 +562,23 @@ jQuery(document).ready(function($) {
             return hours + ':' + minutes;
         }
 
-        // 7. Security: Escape raw strings to prevent XSS
         function escapeHtml(text) {
-            if (!text || typeof text !== 'string') {
-                return '';
-            }
-            return text
-                .replace(/&/g, "&amp;")
-                .replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;")
-                .replace(/"/g, "&quot;")
-                .replace(/'/g, "&#039;");
+            if (!text || typeof text !== 'string') return '';
+            return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
         }
 
-        // 8. Custom lightweight parser for Gemini markdown formatting
         function parseMarkdown(markdownText) {
-            if (!markdownText || typeof markdownText !== 'string') {
-                return '';
-            }
-            // First escape html to keep things secure
+            if (!markdownText || typeof markdownText !== 'string') return '';
             var html = escapeHtml(markdownText);
-            
-            // Bold formatting (**word**)
             html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-            
-            // Single asterisk/underscore italics (*word*)
             html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
             
-            // Split lines to detect list structures
             var lines = html.split('\n');
             var listOpen = false;
             var processedLines = [];
             
             for (var i = 0; i < lines.length; i++) {
                 var line = lines[i].trim();
-                
-                // Matches bullet lines: starting with - or * followed by space
                 if (line.startsWith('- ') || line.startsWith('* ')) {
                     if (!listOpen) {
                         processedLines.push('<ul>');
@@ -595,30 +593,21 @@ jQuery(document).ready(function($) {
                     processedLines.push(lines[i]);
                 }
             }
-            
-            if (listOpen) {
-                processedLines.push('</ul>');
-            }
+            if (listOpen) processedLines.push('</ul>');
             
             html = processedLines.join('\n');
-            
-            // Group paragraphs using double newline separations
             var paragraphs = html.split(/\n\n+/);
             var finalHTML = [];
             
             for (var p = 0; p < paragraphs.length; p++) {
                 var pText = paragraphs[p].trim();
                 if (!pText) continue;
-                
-                // If it is a block container tag, do not wrap in <p>
                 if (pText.startsWith('<ul>') || pText.startsWith('<ol>') || pText.startsWith('<li>')) {
                     finalHTML.push(pText);
                 } else {
-                    // Convert remaining single newlines to <br>
                     finalHTML.push('<p>' + pText.replace(/\n/g, '<br>') + '</p>');
                 }
             }
-            
             return finalHTML.join('');
         }
     });

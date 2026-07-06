@@ -99,31 +99,77 @@ $widget_id = $is_inline ? 'ai_chatbot-chat-inline' : 'ai_chatbot-chat-floating';
             </div>
         </div>
 
-        <!-- Chat Conversation Area -->
-        <div class="ai_chatbot-chat-messages" id="<?php echo esc_attr($widget_id); ?>-messages">
-            <!-- Initial Greeting -->
-            <div class="ai_chatbot-msg-wrapper bot">
-                <div class="ai_chatbot-msg-bubble">
-                    <p><?php echo esc_html($welcome_msg); ?></p>
+        <!-- Main Content Area: AI View -->
+        <div class="ai_chatbot-view ai_chatbot-view-ai" id="<?php echo esc_attr($widget_id); ?>-view-ai">
+            <!-- Chat Conversation Area -->
+            <div class="ai_chatbot-chat-messages" id="<?php echo esc_attr($widget_id); ?>-messages">
+                <!-- Initial Greeting -->
+                <div class="ai_chatbot-msg-wrapper bot">
+                    <div class="ai_chatbot-msg-bubble">
+                        <p><?php echo esc_html($welcome_msg); ?></p>
+                    </div>
+                    <span class="ai_chatbot-msg-time"><?php echo esc_html(date('H:i')); ?></span>
                 </div>
-                <span class="ai_chatbot-msg-time"><?php echo esc_html(date('H:i')); ?></span>
+            </div>
+
+            <!-- Chat Input Area -->
+            <div class="ai_chatbot-chat-input-area ai_chatbot-hidden" id="<?php echo esc_attr($widget_id); ?>-input-area" style="display: none;">
+                <form class="ai_chatbot-chat-form" id="<?php echo esc_attr($widget_id); ?>-form" autocomplete="off">
+                    <input type="text" class="ai_chatbot-input-field" id="<?php echo esc_attr($widget_id); ?>-input"
+                        placeholder="Nhập tin nhắn..." aria-label="Type message" disabled>
+                    <button type="submit" class="ai_chatbot-btn-send" id="<?php echo esc_attr($widget_id); ?>-submit"
+                        aria-label="Send message" disabled>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                            stroke-linejoin="round">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                        </svg>
+                    </button>
+                </form>
+
+                <!-- Takeover Suggestion (Hidden by default) -->
+                <div class="ai_chatbot-takeover-banner" id="<?php echo esc_attr($widget_id); ?>-takeover-banner" style="display: none;">
+                    <button type="button" class="ai_chatbot-btn-takeover">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                        Trò chuyện với nhân viên tư vấn?
+                    </button>
+                </div>
             </div>
         </div>
 
-        <!-- Chat Input Area -->
-        <div class="ai_chatbot-chat-input-area ai_chatbot-hidden" style="display: none;">
-            <form class="ai_chatbot-chat-form" id="<?php echo esc_attr($widget_id); ?>-form" autocomplete="off">
-                <input type="text" class="ai_chatbot-input-field" id="<?php echo esc_attr($widget_id); ?>-input"
-                    placeholder="Nhập tin nhắn..." aria-label="Type message" disabled>
-                <button type="submit" class="ai_chatbot-btn-send" id="<?php echo esc_attr($widget_id); ?>-submit"
-                    aria-label="Send message" disabled>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
-                        stroke-linejoin="round">
-                        <line x1="22" y1="2" x2="11" y2="13"></line>
-                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                    </svg>
+        <!-- Main Content Area: Human View -->
+        <div class="ai_chatbot-view ai_chatbot-view-human" id="<?php echo esc_attr($widget_id); ?>-view-human" style="display: none;">
+            <div class="ai_chatbot-human-header-bar">
+                <button type="button" class="ai_chatbot-btn-back-ai" id="<?php echo esc_attr($widget_id); ?>-back-ai">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px; margin-right: 6px;"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    Quay lại hỏi AI
                 </button>
-            </form>
+            </div>
+            <!-- Human Chat Messages -->
+            <div class="ai_chatbot-chat-messages" id="<?php echo esc_attr($widget_id); ?>-human-messages">
+                <div class="ai_chatbot-msg-wrapper bot">
+                    <div class="ai_chatbot-msg-bubble">
+                        <p>Chào bạn, bạn cần tư vấn thêm thông tin gì ạ? Vui lòng gửi tin nhắn, tư vấn viên sẽ phản hồi ngay.</p>
+                    </div>
+                    <span class="ai_chatbot-msg-time"><?php echo esc_html(date('H:i')); ?></span>
+                </div>
+            </div>
+
+            <!-- Human Input Area -->
+            <div class="ai_chatbot-chat-input-area" id="<?php echo esc_attr($widget_id); ?>-human-input-area">
+                <form class="ai_chatbot-chat-form" id="<?php echo esc_attr($widget_id); ?>-human-form" autocomplete="off">
+                    <input type="text" class="ai_chatbot-input-field" id="<?php echo esc_attr($widget_id); ?>-human-input"
+                        placeholder="Nhắn tin cho tư vấn viên..." aria-label="Type message">
+                    <button type="submit" class="ai_chatbot-btn-send" id="<?php echo esc_attr($widget_id); ?>-human-submit"
+                        aria-label="Send message">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                            stroke-linejoin="round">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                        </svg>
+                    </button>
+                </form>
+            </div>
         </div>
     </div>
 </div>

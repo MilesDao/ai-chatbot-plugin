@@ -24,6 +24,7 @@ class AI_Chatbot_Admin_Settings {
 
         // AJAX handler for viewing conversation messages
         add_action( 'wp_ajax_ai_chatbot_get_conversation_messages', array( $this, 'handle_get_conversation_messages' ) );
+        add_action( 'wp_ajax_ai_chatbot_check_waiting', array( $this, 'handle_check_waiting' ) );
     }
 
     /**
@@ -87,8 +88,11 @@ class AI_Chatbot_Admin_Settings {
         // Support implicit secret API Key via PHP constant OPENROUTER_API_KEY
         $api_key_is_constant = defined( 'OPENROUTER_API_KEY' );
         $api_key        = $api_key_is_constant ? OPENROUTER_API_KEY : get_option( 'ai_chatbot_openrouter_api_key', '' );
-        $chat_model     = get_option( 'ai_chatbot_openrouter_model', 'openai/gpt-oss-120b:free' );
-        $embed_model    = get_option( 'ai_chatbot_openrouter_embed_model', 'nvidia/llama-nemotron-embed-vl-1b-v2:free' );
+        $chat_model     = get_option( 'ai_chatbot_openrouter_model' );
+        if ( empty( $chat_model ) ) $chat_model = 'deepseek/deepseek-v4-flash';
+        
+        $embed_model    = get_option( 'ai_chatbot_openrouter_embed_model' );
+        if ( empty( $embed_model ) ) $embed_model = 'qwen/qwen3-embedding-8b';
         
         $enable_widget  = get_option( 'ai_chatbot_enable_widget', '1' );
         $require_lead   = get_option( 'ai_chatbot_require_lead_form', '1' );
@@ -383,14 +387,14 @@ NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
 
                         <div class="ai_chatbot-form-group">
                             <label for="ai_chatbot_openrouter_model">Mô hình Chat (LLM)</label>
-                            <input type="text" id="ai_chatbot_openrouter_model" name="ai_chatbot_openrouter_model" value="<?php echo esc_attr( $chat_model ); ?>" placeholder="openai/gpt-oss-120b:free">
-                            <p class="description">Nhập OpenRouter Model ID dùng để tạo câu trả lời (VD: openai/gpt-oss-120b:free).</p>
+                            <input type="text" id="ai_chatbot_openrouter_model" name="ai_chatbot_openrouter_model" value="<?php echo esc_attr( $chat_model ); ?>" placeholder="deepseek/deepseek-v4-flash">
+                            <p class="description">Nhập OpenRouter Model ID dùng để tạo câu trả lời (VD: deepseek/deepseek-v4-flash).</p>
                         </div>
 
                         <div class="ai_chatbot-form-group">
                             <label for="ai_chatbot_openrouter_embed_model">Mô hình Nhúng (Embedding)</label>
-                            <input type="text" id="ai_chatbot_openrouter_embed_model" name="ai_chatbot_openrouter_embed_model" value="<?php echo esc_attr( $embed_model ); ?>" placeholder="nvidia/llama-nemotron-embed-vl-1b-v2:free">
-                            <p class="description">Nhập OpenRouter Embedding Model ID dùng để mã hóa tài liệu (VD: nvidia/llama-nemotron-embed-vl-1b-v2:free).</p>
+                            <input type="text" id="ai_chatbot_openrouter_embed_model" name="ai_chatbot_openrouter_embed_model" value="<?php echo esc_attr( $embed_model ); ?>" placeholder="qwen/qwen3-embedding-8b">
+                            <p class="description">Nhập OpenRouter Embedding Model ID dùng để mã hóa tài liệu (VD: qwen/qwen3-embedding-8b).</p>
                         </div>
 
                         <div class="ai_chatbot-form-group">
@@ -579,14 +583,27 @@ NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
                                             </td>
                                         </tr>
                                         <!-- Hidden detail row -->
-                                        <tr class="ai_chatbot-conv-detail" data-conv-id="<?php echo esc_attr( $conv['id'] ); ?>" style="display:none;">
+                                        <tr class="ai_chatbot-conv-detail" data-conv-id="<?php echo esc_attr( $conv['id'] ); ?>" data-session-id="<?php echo esc_attr( $conv['session_id'] ); ?>" style="display:none;">
                                             <td colspan="6" style="padding: 0;">
-                                                <div class="ai_chatbot-conv-messages" style="max-height: 400px; overflow-y: auto; padding: 16px 20px; background: #f8fafc; border-radius: 8px; margin: 8px;">
-                                                    <div style="text-align:right; margin-bottom:8px;">
-                                                        <button class="ai_chatbot-btn-close-conv btn-view" data-conv-id="<?php echo esc_attr( $conv['id'] ); ?>">Đóng</button>
+                                                <div style="background: #f8fafc; border-radius: 8px; margin: 8px; overflow: hidden; border: 1px solid #e2e8f0; max-width: 800px; margin-left: auto; margin-right: auto;">
+                                                    <div style="padding: 12px 16px; background: #ffffff; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
+                                                        <div style="font-weight: 600; color: #0f172a; font-size: 14px;">
+                                                            Trò chuyện trực tiếp
+                                                            <?php if ($conv['status'] === 'human') : ?>
+                                                                <span style="background: #ef4444; color: white; padding: 2px 8px; border-radius: 99px; font-size: 11px; margin-left: 8px;">Khách đang đợi</span>
+                                                            <?php endif; ?>
+                                                        </div>
+                                                        <button class="ai_chatbot-btn-close-conv btn-view" style="color: #64748b;" data-conv-id="<?php echo esc_attr( $conv['id'] ); ?>">Đóng</button>
                                                     </div>
-                                                    <div id="ai_chatbot-conv-msg-list-<?php echo esc_attr( $conv['id'] ); ?>">
-                                                        <p style="text-align:center; color:#94a3b8;">Đang tải...</p>
+                                                    
+                                                    <!-- Single Unified Chat Stream -->
+                                                    <div id="ai_chatbot-conv-log-unified-<?php echo esc_attr( $conv['id'] ); ?>" style="height: 400px; overflow-y: auto; padding: 16px; background: #f8fafc; display: flex; flex-direction: column;">
+                                                        <p style="text-align:center; color:#94a3b8; font-size:13px; margin: auto;">Đang tải...</p>
+                                                    </div>
+                                                    
+                                                    <div style="padding: 12px; border-top: 1px solid #e2e8f0; background: #ffffff; display: flex; gap: 8px;">
+                                                        <input type="text" class="ai_chatbot-admin-reply-input" id="ai_chatbot-admin-reply-<?php echo esc_attr( $conv['id'] ); ?>" placeholder="Nhập phản hồi với tư cách nhân viên..." style="flex: 1; border: 1px solid #cbd5e1; padding: 10px 14px; border-radius: 6px; font-size: 13px;">
+                                                        <button class="ai_chatbot-btn-admin-send" data-conv-id="<?php echo esc_attr( $conv['id'] ); ?>" data-session-id="<?php echo esc_attr( $conv['session_id'] ); ?>" style="background: #0ea5e9; color: white; border: none; padding: 0 20px; border-radius: 6px; font-weight: 600; cursor: pointer; transition: 0.2s;">Gửi</button>
                                                     </div>
                                                 </div>
                                             </td>
@@ -600,10 +617,101 @@ NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
 
                 <script>
                 jQuery(document).ready(function($) {
+                    
+                    // Polling for waiting customers globally
+                    var originalTitle = document.title;
+                    var flashInterval = null;
+                    var lastWaitingCount = 0;
+                    
+                    function checkWaitingCustomers() {
+                        $.post(ajaxurl, {
+                            action: 'ai_chatbot_check_waiting',
+                            nonce: '<?php echo wp_create_nonce("ai_chatbot_admin_nonce"); ?>'
+                        }, function(response) {
+                            if (response.success && response.data.waiting > 0) {
+                                if (response.data.waiting > lastWaitingCount) {
+                                    // Audio ping (best effort)
+                                    var audio = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
+                                    audio.play().catch(function(e) {});
+                                    
+                                    if (!flashInterval) {
+                                        flashInterval = setInterval(function() {
+                                            document.title = document.title === originalTitle ? '(1) Khách cần hỗ trợ!' : originalTitle;
+                                        }, 1000);
+                                    }
+                                }
+                                lastWaitingCount = response.data.waiting;
+                                $('.ai_chatbot-tab-link[href*="tab=conversations"]').html('Lịch sử hội thoại <span style="background:#ef4444; color:white; border-radius:10px; padding:2px 6px; font-size:10px; margin-left:4px;">' + lastWaitingCount + ' chờ</span>');
+                            } else {
+                                lastWaitingCount = 0;
+                                if (flashInterval) {
+                                    clearInterval(flashInterval);
+                                    flashInterval = null;
+                                    document.title = originalTitle;
+                                }
+                                $('.ai_chatbot-tab-link[href*="tab=conversations"]').html('Lịch sử hội thoại');
+                            }
+                        });
+                    }
+                    setInterval(checkWaitingCustomers, 5000);
+                    checkWaitingCustomers();
+
+                    $(window).focus(function() {
+                        if (flashInterval) {
+                            clearInterval(flashInterval);
+                            flashInterval = null;
+                            document.title = originalTitle;
+                        }
+                    });
+
+                    // Load conversation details
+                    function renderUnifiedMsg(msg) {
+                        var isUser = msg.role === 'user';
+                        var isAdmin = (msg.role === 'bot' && msg.chat_type === 'human');
+                        var isAI = (msg.role === 'bot' && msg.chat_type !== 'human');
+                        
+                        var align = isUser ? 'flex-end' : 'flex-start';
+                        var textBtnAlign = isUser ? 'right' : 'left';
+                        var bg = isUser ? '#0ea5e9' : (isAdmin ? '#e0e7ff' : '#f1f5f9');
+                        var color = isUser ? '#ffffff' : '#1e293b';
+                        var border = isAdmin ? '1px solid #c7d2fe' : 'none';
+                        var label = isUser ? 'Khách hàng' : (isAdmin ? '👤 Nhân viên' : '🤖 AI Bot');
+                        
+                        var html = '<div style="display: flex; flex-direction: column; align-items: ' + align + '; margin-bottom: 12px; text-align: ' + textBtnAlign + ';">';
+                        html += '<div style="max-width: 85%; background: ' + bg + '; color: ' + color + '; padding: 10px 14px; border-radius: 12px; font-size: 13px; line-height: 1.5; text-align: left; word-wrap: break-word; border: ' + border + ';">';
+                        html += '<div style="font-size: 11px; font-weight: 700; opacity: 0.7; margin-bottom: 4px;">' + label + '</div>';
+                        html += msg.content;
+                        html += '</div>';
+                        html += '<div style="font-size: 10px; opacity: 0.5; margin-top: 4px; padding: 0 4px;">' + msg.created_at + '</div>';
+                        html += '</div>';
+                        return html;
+                    }
+                    
+                    function fetchMessages(convId, forceScroll) {
+                        $.post(ajaxurl, {
+                            action: 'ai_chatbot_get_conversation_messages',
+                            conv_id: convId,
+                            nonce: '<?php echo wp_create_nonce("ai_chatbot_admin_nonce"); ?>'
+                        }, function(response) {
+                            if (response.success && response.data.messages) {
+                                var html = '';
+                                $.each(response.data.messages, function(i, msg) {
+                                    html += renderUnifiedMsg(msg);
+                                });
+                                
+                                var container = $('#ai_chatbot-conv-log-unified-' + convId);
+                                container.html(html || '<p style="text-align:center; color:#94a3b8; font-size:13px; margin: auto;">Không có tin nhắn</p>');
+                                
+                                if (forceScroll) {
+                                    container.scrollTop(container[0].scrollHeight);
+                                }
+                            }
+                        });
+                    }
+
                     $('.ai_chatbot-conv-row').on('click', function() {
                         var convId = $(this).data('conv-id');
                         var detailRow = $('.ai_chatbot-conv-detail[data-conv-id="' + convId + '"]');
-                        var msgContainer = $('#ai_chatbot-conv-msg-list-' + convId);
 
                         if (detailRow.is(':visible')) {
                             detailRow.hide();
@@ -613,37 +721,57 @@ NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
                         $('.ai_chatbot-conv-detail').hide();
                         detailRow.show();
 
-                        if (msgContainer.data('loaded')) return;
-
-                        $.post(ajaxurl, {
-                            action: 'ai_chatbot_get_conversation_messages',
-                            conv_id: convId,
-                            nonce: '<?php echo wp_create_nonce("ai_chatbot_admin_nonce"); ?>'
-                        }, function(response) {
-                            if (response.success && response.data.messages) {
-                                var html = '';
-                                $.each(response.data.messages, function(i, msg) {
-                                    var isUser = msg.role === 'user';
-                                    var align = isUser ? 'right' : 'left';
-                                    var bg = isUser ? '#0ea5e9' : '#e2e8f0';
-                                    var color = isUser ? '#fff' : '#1e293b';
-                                    var label = isUser ? 'Người dùng' : 'AI Bot';
-                                    html += '<div style="margin-bottom:12px; text-align:' + align + ';">';
-                                    html += '<div style="display:inline-block; max-width:80%; background:' + bg + '; color:' + color + '; padding:10px 14px; border-radius:12px; font-size:13px; line-height:1.5; text-align:left; word-wrap:break-word;">';
-                                    html += '<div style="font-size:10px; font-weight:600; opacity:0.7; margin-bottom:4px;">' + label + '</div>';
-                                    html += msg.content;
-                                    html += '<div style="font-size:10px; opacity:0.6; margin-top:4px;">' + msg.created_at + '</div>';
-                                    html += '</div></div>';
-                                });
-                                msgContainer.html(html);
-                                msgContainer.data('loaded', true);
-                            }
-                        });
+                        fetchMessages(convId, true);
+                        
+                        if (!detailRow.data('polling')) {
+                            var pollTimer = setInterval(function() {
+                                if (detailRow.is(':visible')) {
+                                    fetchMessages(convId, false);
+                                }
+                            }, 4000);
+                            detailRow.data('polling', pollTimer);
+                        }
                     });
 
                     $('.ai_chatbot-btn-close-conv').on('click', function(e) {
                         e.stopPropagation();
                         $(this).closest('.ai_chatbot-conv-detail').hide();
+                    });
+                    
+                    $('.ai_chatbot-btn-admin-send').on('click', function() {
+                        var btn = $(this);
+                        var convId = btn.data('conv-id');
+                        var sessionId = btn.data('session-id');
+                        var input = $('#ai_chatbot-admin-reply-' + convId);
+                        var text = input.val().trim();
+                        
+                        if (!text) return;
+                        
+                        btn.prop('disabled', true).text('...');
+                        input.prop('disabled', true);
+                        
+                        $.post(ajaxurl, {
+                            action: 'ai_chatbot_save_message',
+                            nonce: '<?php echo wp_create_nonce("ai_chatbot_nonce"); ?>',
+                            session_id: sessionId,
+                            role: 'bot',
+                            content: text,
+                            chat_type: 'human'
+                        }, function() {
+                            input.val('').prop('disabled', false).focus();
+                            btn.prop('disabled', false).text('Gửi');
+                            fetchMessages(convId, true); 
+                        }).fail(function() {
+                            alert("Có lỗi gửi tin nhắn.");
+                            input.prop('disabled', false);
+                            btn.prop('disabled', false).text('Gửi');
+                        });
+                    });
+                    
+                    $('.ai_chatbot-admin-reply-input').on('keypress', function(e) {
+                        if (e.which == 13) {
+                            $(this).siblings('.ai_chatbot-btn-admin-send').click();
+                        }
                     });
                 });
                 </script>
@@ -1007,6 +1135,16 @@ NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
     /**
      * AJAX handler to fetch messages for a conversation.
      */
+    public function handle_check_waiting() {
+        check_ajax_referer( 'ai_chatbot_admin_nonce', 'nonce' );
+        if ( ! current_user_can( 'manage_options' ) ) wp_send_json_error();
+        
+        global $wpdb;
+        $table = $wpdb->prefix . 'ai_chatbot_conversations';
+        $waiting = $wpdb->get_var("SELECT COUNT(*) FROM $table WHERE status = 'human'");
+        wp_send_json_success( array( 'waiting' => intval($waiting) ) );
+    }
+
     public function handle_get_conversation_messages() {
         check_ajax_referer( 'ai_chatbot_admin_nonce', 'nonce' );
 
@@ -1023,7 +1161,7 @@ NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
         $table_messages = $wpdb->prefix . 'ai_chatbot_messages';
 
         $messages = $wpdb->get_results( $wpdb->prepare(
-            "SELECT role, content, created_at FROM $table_messages WHERE conversation_id = %d ORDER BY created_at ASC",
+            "SELECT role, content, chat_type, created_at FROM $table_messages WHERE conversation_id = %d ORDER BY created_at ASC",
             $conv_id
         ), ARRAY_A );
 

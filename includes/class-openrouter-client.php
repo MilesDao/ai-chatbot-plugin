@@ -18,9 +18,9 @@ class OpenRouter_API_Client {
     private $embed_model;
 
     public function __construct( $api_key, $chat_model = 'openai/gpt-oss-120b:free', $embed_model = 'nvidia/llama-nemotron-embed-vl-1b-v2:free' ) {
-        $this->api_key = $api_key;
-        $this->chat_model = $chat_model;
-        $this->embed_model = $embed_model;
+        $this->api_key = trim($api_key);
+        $this->chat_model = trim($chat_model);
+        $this->embed_model = trim($embed_model);
     }
 
     /**
@@ -47,7 +47,7 @@ class OpenRouter_API_Client {
                 'Authorization' => 'Bearer ' . $this->api_key,
                 'Content-Type'  => 'application/json',
                 'HTTP-Referer'  => site_url(),
-                'X-Title'       => get_bloginfo( 'name' )
+                'X-Title'       => 'WordPress_Chatbot'
             ),
             'body'      => wp_json_encode( $body ),
             'timeout'   => 20,
@@ -87,12 +87,9 @@ class OpenRouter_API_Client {
 
         $system_instruction = "Bạn là một AI hỗ trợ viết lại câu hỏi. Nhiệm vụ của bạn là dựa vào ngữ cảnh của các tin nhắn trước đó, hãy viết lại câu hỏi mới nhất của người dùng thành một câu hoàn chỉnh, độc lập và rõ ràng ngữ nghĩa, KHÔNG thay đổi ý định của họ. CHỈ trả lời bằng câu đã viết lại, không thêm lời giải thích.";
 
-        $messages = array(
-            array(
-                'role' => 'system',
-                'content' => $system_instruction
-            )
-        );
+        $final_message = "Chỉ dẫn hệ thống: " . $system_instruction . "\n\nCâu hỏi của người dùng: " . $message;
+
+        $messages = array();
 
         foreach ( $history as $msg ) {
             $messages[] = array(
@@ -103,22 +100,20 @@ class OpenRouter_API_Client {
 
         $messages[] = array(
             'role' => 'user',
-            'content' => $message
+            'content' => $final_message
         );
 
         $body = array(
-            'model'       => 'google/gemini-2.5-flash',
-            'messages'    => $messages,
-            'temperature' => 0.0,
-            'max_tokens'  => 100
+            'model'       => $this->chat_model,
+            'messages'    => $messages
         );
 
         $response = wp_remote_post( $endpoint, array(
             'headers'   => array(
                 'Authorization' => 'Bearer ' . $this->api_key,
                 'Content-Type'  => 'application/json',
-                'HTTP-Referer'  => home_url(),
-                'X-Title'       => get_bloginfo( 'name' )
+                'HTTP-Referer'  => site_url(),
+                'X-Title'       => 'WordPress_Chatbot'
             ),
             'body'      => wp_json_encode( $body ),
             'timeout'   => 15,
@@ -152,12 +147,9 @@ class OpenRouter_API_Client {
     public function generate_chat_answer( $message, $system_instruction, $history = array() ) {
         $endpoint = "{$this->base_url}/chat/completions";
 
-        $messages = array(
-            array(
-                'role' => 'system',
-                'content' => $system_instruction
-            )
-        );
+        $final_message = "Chỉ dẫn hệ thống: " . $system_instruction . "\n\nCâu hỏi của người dùng: " . $message;
+
+        $messages = array();
 
         if ( ! empty( $history ) && is_array( $history ) ) {
             foreach ( $history as $msg ) {
@@ -170,7 +162,7 @@ class OpenRouter_API_Client {
 
         $messages[] = array(
             'role' => 'user',
-            'content' => $message
+            'content' => $final_message
         );
 
         $body = array(
@@ -220,12 +212,9 @@ class OpenRouter_API_Client {
     public function generate_chat_answer_stream( $message, $system_instruction, $history = array() ) {
         $endpoint = "{$this->base_url}/chat/completions";
 
-        $messages = array(
-            array(
-                'role' => 'system',
-                'content' => $system_instruction
-            )
-        );
+        $final_message = "Chỉ dẫn hệ thống: " . $system_instruction . "\n\nCâu hỏi của người dùng: " . $message;
+
+        $messages = array();
 
         if ( ! empty( $history ) && is_array( $history ) ) {
             foreach ( $history as $msg ) {
@@ -238,14 +227,12 @@ class OpenRouter_API_Client {
 
         $messages[] = array(
             'role' => 'user',
-            'content' => $message
+            'content' => $final_message
         );
 
         $body = array(
             'model'       => $this->chat_model,
             'messages'    => $messages,
-            'temperature' => 0.3,
-            'max_tokens'  => 1200,
             'stream'      => true
         );
 
@@ -256,8 +243,9 @@ class OpenRouter_API_Client {
         curl_setopt( $ch, CURLOPT_HTTPHEADER, array(
             'Authorization: Bearer ' . $this->api_key,
             'Content-Type: application/json',
-            'HTTP-Referer: ' . home_url(),
-            'X-Title: ' . get_bloginfo( 'name' )
+            'HTTP-Referer: ' . site_url(),
+            'Referer: ' . site_url(),
+            'X-Title: WordPress_Chatbot'
         ));
 
         // Ensure headers are sent
