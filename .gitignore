@@ -1,0 +1,19 @@
+# Environment variables
+.env
+
+# Logs
+*.log
+debug.log
+
+# Dependency directories
+node_modules/
+vendor/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Graphify / AI tools output
+graphify-out/
+.gemini/
+scratch/
