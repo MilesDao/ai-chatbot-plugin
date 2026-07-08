@@ -174,14 +174,8 @@ jQuery(document).ready(function($) {
                                 }
                                 
                                 if (sender === 'bot' && msgMode === 'ai') {
-                                    var splitParts = msg.content.split(/<tách box chat>/i);
-                                    $.each(splitParts, function(j, part) {
-                                        var partText = part.trim();
-                                        if (partText) {
-                                            var html = parseMarkdown(partText);
-                                            appendMessage(html, sender, true, msgTime, msgMode);
-                                        }
-                                    });
+                                    var html = parseMarkdown(msg.content);
+                                    appendMessage(html, sender, true, msgTime, msgMode);
                                 } else {
                                     var html = parseMarkdown(msg.content);
                                     appendMessage(html, sender, true, msgTime, msgMode);
@@ -441,16 +435,7 @@ jQuery(document).ready(function($) {
                                         var deltaText = dataObj.choices[0].delta.content;
                                         fullAnswer += deltaText;
                                         
-                                        if (fullAnswer.toLowerCase().includes('<tách box chat>')) {
-                                            var parts = fullAnswer.split(/<tách box chat>/i);
-                                            var latestPart = parts[parts.length - 1];
-                                            if (parts.length > 1 && deltaText.toLowerCase().includes('chat>')) {
-                                                currentMsgBubble = null;
-                                            }
-                                            currentBoxHTML = parseMarkdown(latestPart);
-                                        } else {
-                                            currentBoxHTML = parseMarkdown(fullAnswer);
-                                        }
+                                        currentBoxHTML = parseMarkdown(fullAnswer);
                                         
                                         if (!currentMsgBubble) {
                                             appendMessage('', 'bot', false, '', 'ai');
@@ -511,9 +496,26 @@ jQuery(document).ready(function($) {
             var timeString = time || getCurrentTime();
             var bubbleContent = isHTML ? content : escapeHtml(content);
             
-            // Do not wrap the suggestion button in a bubble
             var isSuggestion = content.indexOf('ai_chatbot-takeover-suggestion') !== -1;
-            var innerHtml = isSuggestion ? content : ('<div class="ai_chatbot-msg-bubble">' + (isHTML ? bubbleContent : '<p>' + bubbleContent + '</p>') + '</div><span class="ai_chatbot-msg-time">' + timeString + '</span>');
+            var innerHtml = '';
+            if (isSuggestion) {
+                innerHtml = content;
+            } else {
+                var bubbleHtml = '<div class="ai_chatbot-msg-bubble">' + (isHTML ? bubbleContent : '<p>' + bubbleContent + '</p>') + '</div>';
+                if (sender === 'bot' && mode === 'ai') {
+                    var actionsHtml = 
+                        '<div class="ai_chatbot-bot-actions">' +
+                            '<button type="button" class="ai_chatbot-action-btn" title="Copy"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg></button>' +
+                            '<button type="button" class="ai_chatbot-action-btn" title="Thích"><svg viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg></button>' +
+                            '<button type="button" class="ai_chatbot-action-btn" title="Không thích"><svg viewBox="0 0 24 24"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"></path></svg></button>' +
+                            '<div class="ai_chatbot-action-divider"></div>' +
+                            '<span>Just now</span>' +
+                        '</div>';
+                    innerHtml = bubbleHtml + actionsHtml;
+                } else {
+                    innerHtml = bubbleHtml + '<span class="ai_chatbot-msg-time">' + timeString + '</span>';
+                }
+            }
             
             var msgHtml = '<div class="ai_chatbot-msg-wrapper ' + sender + '">' + innerHtml + '</div>';
                 

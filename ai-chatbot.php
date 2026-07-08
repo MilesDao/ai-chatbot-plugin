@@ -3,7 +3,7 @@
  * Plugin Name: AI Chatbot
  * Plugin URI: https://github.com/google-deepmind/ai-chatbot
  * Description: A self-contained AI Chatbot with Retrieval-Augmented Generation (RAG) powered by the Gemini API. Index local files in WordPress MySQL and query them in real-time using a beautiful glassmorphic floating widget.
- * Version: 1.0.7
+ * Version: 1.0.8
  * Author: Dao Trung
  * Text Domain: ai-chatbot
  * Requires at least: 5.8
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 // Define Constants
 define( 'AI_CHATBOT_PATH', plugin_dir_path( __FILE__ ) );
 define( 'AI_CHATBOT_URL', plugin_dir_url( __FILE__ ) );
-define( 'AI_CHATBOT_VERSION', '1.0.7' );
+define( 'AI_CHATBOT_VERSION', '1.0.8' );
 
 /**
  * Custom activation routine to create database tables for documents and chunks.
@@ -48,13 +48,21 @@ function ai_chatbot_activate() {
         id bigint(20) NOT NULL AUTO_INCREMENT,
         document_id bigint(20) NOT NULL,
         content longtext NOT NULL,
+        parent_content longtext,
         embedding longtext NOT NULL,
         token_count int(11) DEFAULT 0,
         created_at datetime DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY  (id),
-        KEY document_id (document_id)
+        KEY document_id (document_id),
+        FULLTEXT KEY idx_content (content)
     ) $charset_collate;";
     dbDelta( $sql_chunks );
+
+    // Ensure FULLTEXT index exists for older installations
+    $index_check = $wpdb->get_results("SHOW INDEX FROM $table_chunks WHERE Key_name = 'idx_content'");
+    if (empty($index_check)) {
+        $wpdb->query("ALTER TABLE $table_chunks ADD FULLTEXT idx_content (content)");
+    }
 
     // 3. Table for storing collected customer leads (Name, Email, Phone)
     $table_leads = $wpdb->prefix . 'ai_chatbot_leads';
@@ -264,7 +272,9 @@ class AI_Chatbot_Chatbot {
         $client = new OpenRouter_API_Client( $api_key, $chat_model, $embed_model );
 
         $search_query = $message;
-        if ( ! empty( $history ) ) {
+        $enable_reformulate = get_option( 'ai_chatbot_enable_reformulate', '1' );
+        
+        if ( '1' === $enable_reformulate && ! empty( $history ) ) {
             $search_query = $client->reformulate_query( $message, $history );
         }
 
@@ -295,8 +305,7 @@ class AI_Chatbot_Chatbot {
             $system_prompt .= "\n\n[DỮ LIỆU TRƯỜNG HỌC]\n" . $chunks_text . "\n[/DỮ LIỆU TRƯỜNG HỌC]";
         }
 
-        $split_instruction = "QUAN TRỌNG: Để trả lời tự nhiên giống con người đang nhắn tin, hãy ngắt câu trả lời thành nhiều tin nhắn ngắn. Sử dụng CỤM TỪ <Tách box chat> giữa các phần để ngắt tin nhắn. Ví dụ:\nXin chào bạn\n<Tách box chat>\nỞ trường mình có các ngành như...\n\nCHÚ Ý: Chỉ dùng <Tách box chat> (không tự ý thay đổi hay gõ sai chính tả).";
-        $context_text = $system_prompt . "\n\n" . $split_instruction;
+        $context_text = $system_prompt;
 
         // History is now handled above
 

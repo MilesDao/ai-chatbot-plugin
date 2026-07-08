@@ -49,6 +49,9 @@ class AI_Chatbot_Admin_Settings {
         register_setting( 'ai_chatbot_options', 'ai_chatbot_openrouter_api_key' );
         register_setting( 'ai_chatbot_options', 'ai_chatbot_openrouter_model' );
         register_setting( 'ai_chatbot_options', 'ai_chatbot_openrouter_embed_model' );
+        register_setting( 'ai_chatbot_options', 'ai_chatbot_openrouter_rerank_model' );
+        register_setting( 'ai_chatbot_options', 'ai_chatbot_enable_reranker' );
+        register_setting( 'ai_chatbot_options', 'ai_chatbot_enable_reformulate' );
         register_setting( 'ai_chatbot_options', 'ai_chatbot_enable_widget' );
         register_setting( 'ai_chatbot_options', 'ai_chatbot_require_lead_form' );
         register_setting( 'ai_chatbot_options', 'ai_chatbot_primary_color' );
@@ -94,6 +97,12 @@ class AI_Chatbot_Admin_Settings {
         $embed_model    = get_option( 'ai_chatbot_openrouter_embed_model' );
         if ( empty( $embed_model ) ) $embed_model = 'qwen/qwen3-embedding-8b';
         
+        $rerank_model   = get_option( 'ai_chatbot_openrouter_rerank_model' );
+        if ( empty( $rerank_model ) ) $rerank_model = 'cohere/rerank-v3.5';
+        
+        $enable_reranker = get_option( 'ai_chatbot_enable_reranker', '1' );
+        $enable_reformulate = get_option( 'ai_chatbot_enable_reformulate', '1' );
+
         $enable_widget  = get_option( 'ai_chatbot_enable_widget', '1' );
         $require_lead   = get_option( 'ai_chatbot_require_lead_form', '1' );
         $primary_color  = get_option( 'ai_chatbot_primary_color', '#0ea5e9' );
@@ -398,6 +407,12 @@ NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
                         </div>
 
                         <div class="ai_chatbot-form-group">
+                            <label for="ai_chatbot_openrouter_rerank_model">Mô hình Sắp xếp lại (Reranker)</label>
+                            <input type="text" id="ai_chatbot_openrouter_rerank_model" name="ai_chatbot_openrouter_rerank_model" value="<?php echo esc_attr( $rerank_model ); ?>" placeholder="cohere/rerank-v3.5">
+                            <p class="description">Nhập OpenRouter Reranker Model ID dùng để đánh giá độ chính xác tài liệu (VD: cohere/rerank-v3.5).</p>
+                        </div>
+
+                        <div class="ai_chatbot-form-group">
                             <label for="ai_chatbot_pinecone_api_key">Pinecone API Key</label>
                             <input type="password" id="ai_chatbot_pinecone_api_key" name="ai_chatbot_pinecone_api_key" value="<?php echo esc_attr( $pinecone_api_key ); ?>" placeholder="pcsk_...">
                             <p class="description">Lấy mã API key tại <a href="https://app.pinecone.io/" target="_blank" rel="noopener noreferrer">Pinecone</a> để sử dụng Vector Database.</p>
@@ -463,6 +478,23 @@ NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
                             <label for="ai_chatbot_chunk_overlap">Ký tự chồng lấn (Chunk Overlap)</label>
                             <input type="number" id="ai_chatbot_chunk_overlap" name="ai_chatbot_chunk_overlap" value="<?php echo esc_attr( $chunk_overlap ); ?>" min="0" max="1000">
                             <p class="description">Độ chồng lấn ký tự giữa 2 đoạn kề nhau giúp duy trì ngữ cảnh liền mạch (mặc định: 200).</p>
+                        </div>
+
+                        <h3>Tối ưu Tốc độ (Speed Optimization)</h3>
+                        <p style="color: #64748b; margin-bottom: 25px; max-width: 600px;">Các bước xử lý AI liên tiếp có thể gây chậm trễ 3-5 giây. Bạn có thể tắt bớt các chức năng dưới đây để tăng tốc độ phản hồi.</p>
+                        
+                        <div class="ai_chatbot-form-group checkbox-group" style="margin-bottom: 15px;">
+                            <label>
+                                <input type="checkbox" name="ai_chatbot_enable_reformulate" value="1" <?php checked( '1', $enable_reformulate ); ?>> <strong>Bật "Viết lại câu hỏi" (Query Reformulation)</strong>
+                            </label>
+                            <p class="description">Cho phép AI phân tích lịch sử chat để viết lại câu hỏi rõ ràng hơn. <em>Tắt đi sẽ giúp giảm ~1.5 giây độ trễ.</em></p>
+                        </div>
+
+                        <div class="ai_chatbot-form-group checkbox-group" style="margin-bottom: 25px;">
+                            <label>
+                                <input type="checkbox" name="ai_chatbot_enable_reranker" value="1" <?php checked( '1', $enable_reranker ); ?>> <strong>Bật Reranker (Cross-Encoder)</strong>
+                            </label>
+                            <p class="description">Dùng AI chuyên biệt để xếp hạng lại tài liệu. <em>Tắt đi sẽ giúp giảm ~1.5 giây độ trễ.</em></p>
                         </div>
 
                         <?php submit_button( 'Lưu cấu hình', 'primary', 'submit', true, array( 'class' => 'ai_chatbot-btn-primary' ) ); ?>

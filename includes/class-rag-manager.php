@@ -68,15 +68,18 @@ class AI_Chatbot_Manager {
         $successful_chunks = 0;
         $pinecone_vectors = array();
         
-        foreach ( $chunks as $chunk_content ) {
+        foreach ( $chunks as $chunk_data ) {
+            $child_content = $chunk_data['child'];
+            $parent_content = $chunk_data['parent'];
+            
             // Trim and clean chunk content
-            $chunk_content = trim( $chunk_content );
-            if ( empty( $chunk_content ) ) {
+            $child_content = trim( $child_content );
+            if ( empty( $child_content ) ) {
                 continue;
             }
 
-            // Get embedding vector (array of 768 floats)
-            $embedding = $client->get_embedding( $chunk_content );
+            // Get embedding vector for the CHILD chunk
+            $embedding = $client->get_embedding( $child_content );
 
             if ( is_wp_error( $embedding ) ) {
                 // If one chunk fails, log and continue, or fail entirely depending on strictness.
@@ -89,25 +92,26 @@ class AI_Chatbot_Manager {
             $inserted = $wpdb->insert(
                 $table_chunks,
                 array(
-                    'document_id' => $doc_id,
-                    'content'     => $chunk_content,
-                    'embedding'   => wp_json_encode( $embedding ),
-                    'token_count' => intval( strlen( $chunk_content ) / 4 ) // rough estimate of tokens
+                    'document_id'    => $doc_id,
+                    'content'        => $child_content,
+                    'parent_content' => $parent_content,
+                    'embedding'      => wp_json_encode( $embedding ),
+                    'token_count'    => intval( strlen( $child_content ) / 4 ) // rough estimate of tokens
                 ),
-                array( '%d', '%s', '%s', '%d' )
+                array( '%d', '%s', '%s', '%s', '%d' )
             );
 
             if ( $inserted ) {
                 $chunk_id = $wpdb->insert_id;
                 $successful_chunks++;
                 
-                // Prepare vector for Pinecone
+                // Prepare vector for Pinecone (only index the child content)
                 $pinecone_vectors[] = array(
                     'id'     => strval( $chunk_id ),
                     'values' => $embedding,
                     'metadata' => array(
                         'document_id' => $doc_id,
-                        'content'     => $chunk_content
+                        'content'     => $child_content
                     )
                 );
             }
@@ -190,18 +194,17 @@ class AI_Chatbot_Manager {
     }
 
     /**
-     * Splits long text into overlapping chunks, snapping to nearest word boundaries.
+     * Splits long text into Parent-Child overlapping chunks for Hybrid RAG.
      *
      * @param string $text Raw text.
-     * @param int $chunk_size Maximum character size of a chunk.
-     * @param int $chunk_overlap Character overlap.
-     * @return array List of text chunks.
+     * @param string $doc_name Name of the document for metadata enrichment.
+     * @return array List of chunk objects ['child' => '...', 'parent' => '...'].
      */
-    private function chunk_text( $text, $chunk_size = 1000, $chunk_overlap = 200 ) {
+    private function chunk_text( $text, $doc_name = '' ) {
         // Clean white spaces but preserve single newlines
         $text = preg_replace( '/[ \t]+/u', ' ', $text );
         
-        // Split text by double newlines or periods to maintain semantics
+        // Split text into paragraphs/sentences
         $parts = preg_split('/(\n\n|\.)/u', $text, -1, PREG_SPLIT_DELIM_CAPTURE | PREG_SPLIT_NO_EMPTY);
         
         $sentences = array();
@@ -210,7 +213,7 @@ class AI_Chatbot_Manager {
             $temp .= $part;
             if ( $part === "\n\n" || $part === "." ) {
                 if ( ! empty( trim( $temp ) ) ) {
-                    $sentences[] = trim( $temp ) . ( $part === "." ? "" : "" );
+                    $sentences[] = trim( $temp );
                 }
                 $temp = "";
             }
@@ -219,27 +222,70 @@ class AI_Chatbot_Manager {
             $sentences[] = trim( $temp );
         }
         
+        $parent_size = 1500; // ~ 1500 characters
+        $child_size = 400;   // ~ 400 characters
+        $overlap = 100;      // ~ 100 characters
+
         $chunks = array();
-        $current_chunk = "";
+        $current_parent = "";
+        $parent_sentences = array();
         
+        // Generate Parent chunks first
+        $parents = array();
         foreach ( $sentences as $sentence ) {
-            if ( empty( $current_chunk ) ) {
-                $current_chunk = $sentence;
-            } elseif ( mb_strlen( $current_chunk ) + mb_strlen( $sentence ) + 1 <= $chunk_size ) {
-                $current_chunk .= " " . $sentence;
+            if ( empty( $current_parent ) ) {
+                $current_parent = $sentence;
+                $parent_sentences = array($sentence);
+            } elseif ( mb_strlen( $current_parent ) + mb_strlen( $sentence ) + 1 <= $parent_size ) {
+                $current_parent .= " " . $sentence;
+                $parent_sentences[] = $sentence;
             } else {
-                $chunks[] = $current_chunk;
-                $current_chunk = $sentence;
+                $parents[] = array( 'text' => $current_parent, 'sentences' => $parent_sentences );
+                $current_parent = $sentence;
+                $parent_sentences = array($sentence);
+            }
+        }
+        if ( ! empty( $current_parent ) ) {
+            $parents[] = array( 'text' => $current_parent, 'sentences' => $parent_sentences );
+        }
+        
+        // Generate Child chunks with overlap
+        foreach ( $parents as $parent ) {
+            $p_text = $parent['text'];
+            $p_sentences = $parent['sentences'];
+            
+            $current_child = "";
+            foreach ( $p_sentences as $sentence ) {
+                if ( empty( $current_child ) ) {
+                    $current_child = $sentence;
+                } elseif ( mb_strlen( $current_child ) + mb_strlen( $sentence ) + 1 <= $child_size ) {
+                    $current_child .= " " . $sentence;
+                } else {
+                    // Enrich metadata
+                    $child_enriched = "Tên tài liệu: " . $doc_name . "\nNội dung: " . $current_child;
+                    $chunks[] = array(
+                        'child' => $child_enriched,
+                        'parent' => "Tên tài liệu: " . $doc_name . "\nNội dung: " . $p_text
+                    );
+                    
+                    // Overlap: take the last sentence of the previous chunk
+                    $current_child = $sentence;
+                }
+            }
+            if ( ! empty( $current_child ) ) {
+                $child_enriched = "Tên tài liệu: " . $doc_name . "\nNội dung: " . $current_child;
+                $chunks[] = array(
+                    'child' => $child_enriched,
+                    'parent' => "Tên tài liệu: " . $doc_name . "\nNội dung: " . $p_text
+                );
             }
         }
         
-        if ( ! empty( $current_chunk ) ) {
-            $chunks[] = $current_chunk;
-        }
-        
-        // If no chunks generated (e.g. extremely long text without dots), fallback
         if ( empty( $chunks ) ) {
-            $chunks[] = mb_substr( $text, 0, $chunk_size );
+            $chunks[] = array(
+                'child' => "Tên tài liệu: " . $doc_name . "\nNội dung: " . mb_substr( $text, 0, $child_size ),
+                'parent' => "Tên tài liệu: " . $doc_name . "\nNội dung: " . mb_substr( $text, 0, $parent_size )
+            );
         }
         
         return $chunks;
@@ -260,44 +306,29 @@ class AI_Chatbot_Manager {
             return array();
         }
 
-        // 1. Generate embedding for query
+        $fetch_count = $k * 3;
+        $table_chunks = $wpdb->prefix . 'ai_chatbot_chunks';
+        $table_docs   = $wpdb->prefix . 'ai_chatbot_documents';
+
+        // 1. DENSE RETRIEVAL (Pinecone or DB fallback)
+        $dense_results = array();
         $chat_model     = get_option( 'ai_chatbot_openrouter_model' );
-        if ( empty( $chat_model ) ) {
-            $chat_model = 'deepseek/deepseek-v4-flash';
-        }
+        if ( empty( $chat_model ) ) $chat_model = 'deepseek/deepseek-v4-flash';
         $embed_model    = get_option( 'ai_chatbot_openrouter_embed_model' );
-        if ( empty( $embed_model ) ) {
-            $embed_model = 'qwen/qwen3-embedding-8b';
-        }
+        if ( empty( $embed_model ) ) $embed_model = 'qwen/qwen3-embedding-8b';
+        
         $client = new OpenRouter_API_Client( $api_key, $chat_model, $embed_model );
         $query_vector = $client->get_embedding( $query );
 
-        if ( is_wp_error( $query_vector ) || empty( $query_vector ) ) {
-            return array();
-        }
-
-        // Check if Pinecone is configured
         $pinecone_api_key = get_option( 'ai_chatbot_pinecone_api_key', '' );
         $pinecone_host    = get_option( 'ai_chatbot_pinecone_host', '' );
-        
-        $scored_chunks = array();
 
-        if ( ! empty( $pinecone_api_key ) && ! empty( $pinecone_host ) ) {
-            // Pinecone Search
+        if ( ! empty( $query_vector ) && ! is_wp_error( $query_vector ) && ! empty( $pinecone_api_key ) && ! empty( $pinecone_host ) ) {
             $host = rtrim( $pinecone_host, '/' );
             $url = $host . '/query';
-
-            $body = array(
-                'vector' => $query_vector,
-                'topK'   => $k,
-                'includeMetadata' => true
-            );
-
+            $body = array( 'vector' => $query_vector, 'topK' => $fetch_count, 'includeMetadata' => true );
             $response = wp_remote_post( $url, array(
-                'headers' => array(
-                    'Api-Key'      => $pinecone_api_key,
-                    'Content-Type' => 'application/json'
-                ),
+                'headers' => array( 'Api-Key' => $pinecone_api_key, 'Content-Type' => 'application/json' ),
                 'body'    => wp_json_encode( $body ),
                 'timeout' => 15
             ) );
@@ -305,84 +336,154 @@ class AI_Chatbot_Manager {
             if ( ! is_wp_error( $response ) && 200 === wp_remote_retrieve_response_code( $response ) ) {
                 $body_data = json_decode( wp_remote_retrieve_body( $response ), true );
                 if ( ! empty( $body_data['matches'] ) ) {
-                    // Pre-fetch document names
-                    $doc_ids = array();
                     foreach ( $body_data['matches'] as $match ) {
-                        if ( ! empty( $match['metadata']['document_id'] ) ) {
-                            $doc_ids[] = intval( $match['metadata']['document_id'] );
+                        $chunk_id = intval( $match['id'] );
+                        if ( $chunk_id > 0 ) {
+                            $dense_results[] = $chunk_id;
                         }
                     }
-                    $doc_names = array();
-                    if ( ! empty( $doc_ids ) ) {
-                        $doc_ids_str = implode( ',', array_unique( $doc_ids ) );
-                        $table_docs = $wpdb->prefix . 'ai_chatbot_documents';
-                        $results = $wpdb->get_results( "SELECT id, name FROM $table_docs WHERE id IN ($doc_ids_str)" );
-                        foreach ( $results as $row ) {
-                            $doc_names[ $row->id ] = $row->name;
-                        }
-                    }
-
-                    foreach ( $body_data['matches'] as $match ) {
-                        if ( $match['score'] >= $threshold ) {
-                            $doc_id = $match['metadata']['document_id'] ?? 0;
-                            $scored_chunks[] = array(
-                                'content'       => $match['metadata']['content'] ?? '',
-                                'document_name' => $doc_names[ $doc_id ] ?? 'Tài liệu',
-                                'similarity'    => $match['score']
-                            );
-                        }
-                    }
-                    return $scored_chunks; // Already sorted by Pinecone
                 }
             }
         }
 
-        // Fallback to local DB Search
-        // 2. Fetch all chunks from db
-        $table_chunks = $wpdb->prefix . 'ai_chatbot_chunks';
-        $table_docs   = $wpdb->prefix . 'ai_chatbot_documents';
+        // 2. SPARSE RETRIEVAL (MySQL FTS)
+        $sparse_results = array();
+        // Prepare query for boolean mode (add + to each word for required match)
+        $words = preg_split('/\s+/', trim($query));
+        $boolean_query = '';
+        foreach ($words as $word) {
+            if (strlen($word) > 2) {
+                $boolean_query .= '+' . $word . '* ';
+            }
+        }
+        $boolean_query = trim($boolean_query);
+        if (!empty($boolean_query)) {
+            $sql = $wpdb->prepare("
+                SELECT c.id 
+                FROM $table_chunks c
+                JOIN $table_docs d ON c.document_id = d.id
+                WHERE d.status = 'indexed' AND MATCH(c.content) AGAINST(%s IN BOOLEAN MODE)
+                LIMIT %d
+            ", $boolean_query, $fetch_count);
+            $fts_ids = $wpdb->get_col($sql);
+            if (!empty($fts_ids)) {
+                $sparse_results = array_map('intval', $fts_ids);
+            }
+        }
 
-        $query_db = "
-            SELECT c.content, c.embedding, d.name as document_name 
-            FROM $table_chunks c
-            JOIN $table_docs d ON c.document_id = d.id
-            WHERE d.status = 'indexed'
-        ";
+        // 3. RECIPROCAL RANK FUSION (RRF)
+        $rrf_scores = array();
+        $constant_k = 60;
+        
+        foreach ( $dense_results as $rank => $chunk_id ) {
+            if ( ! isset( $rrf_scores[ $chunk_id ] ) ) $rrf_scores[ $chunk_id ] = 0;
+            $rrf_scores[ $chunk_id ] += 1 / ( $constant_k + $rank + 1 );
+        }
+        
+        foreach ( $sparse_results as $rank => $chunk_id ) {
+            if ( ! isset( $rrf_scores[ $chunk_id ] ) ) $rrf_scores[ $chunk_id ] = 0;
+            $rrf_scores[ $chunk_id ] += 1 / ( $constant_k + $rank + 1 );
+        }
 
-        $db_chunks = $wpdb->get_results( $query_db, ARRAY_A );
-        if ( empty( $db_chunks ) ) {
+        if ( empty( $rrf_scores ) ) {
             return array();
         }
 
-        // 3. Compute cosine similarity for each chunk
-        foreach ( $db_chunks as $row ) {
-            $chunk_vector = json_decode( $row['embedding'], true );
-            
-            if ( ! is_array( $chunk_vector ) || count( $chunk_vector ) !== count( $query_vector ) ) {
-                continue;
-            }
+        arsort( $rrf_scores );
+        $top_rrf_ids = array_slice( array_keys( $rrf_scores ), 0, $fetch_count );
+        $ids_str = implode( ',', $top_rrf_ids );
 
-            $score = $this->cosine_similarity( $query_vector, $chunk_vector );
-            
-            if ( $score >= $threshold ) {
-                $scored_chunks[] = array(
-                    'content'       => $row['content'],
-                    'document_name' => $row['document_name'],
-                    'similarity'    => $score
-                );
+        // Fetch chunk data from DB
+        $db_chunks = $wpdb->get_results( "
+            SELECT c.id, c.content, c.parent_content, d.name as document_name 
+            FROM $table_chunks c
+            JOIN $table_docs d ON c.document_id = d.id
+            WHERE c.id IN ($ids_str)
+        ", ARRAY_A );
+
+        if ( empty( $db_chunks ) ) return array();
+
+        // Map chunks by ID
+        $chunks_map = array();
+        $docs_for_rerank = array();
+        foreach ( $db_chunks as $chunk ) {
+            $chunks_map[ $chunk['id'] ] = $chunk;
+        }
+        
+        // Prepare list for reranker
+        foreach ( $top_rrf_ids as $id ) {
+            if ( isset( $chunks_map[ $id ] ) ) {
+                $docs_for_rerank[] = $chunks_map[ $id ]['content'];
             }
         }
 
-        // 4. Sort by score descending
-        usort( $scored_chunks, function( $a, $b ) {
-            if ( $a['similarity'] == $b['similarity'] ) {
-                return 0;
-            }
-            return ( $a['similarity'] > $b['similarity'] ) ? -1 : 1;
-        } );
+        // 4. CROSS-ENCODER RERANKING via OpenRouter
+        $enable_reranker = get_option( 'ai_chatbot_enable_reranker', '1' );
+        $reranked_indices = array();
 
-        // 5. Return top K
-        return array_slice( $scored_chunks, 0, $k );
+        if ( '1' === $enable_reranker ) {
+            $rerank_model = get_option( 'ai_chatbot_openrouter_rerank_model' );
+            if ( empty( $rerank_model ) ) $rerank_model = 'cohere/rerank-v3.5';
+            
+            $rerank_url = "https://openrouter.ai/api/v1/rerank";
+            $rerank_body = array(
+                'model' => $rerank_model,
+                'query' => $query,
+                'documents' => $docs_for_rerank
+            );
+            $rerank_response = wp_remote_post( $rerank_url, array(
+                'headers' => array( 'Authorization' => 'Bearer ' . $api_key, 'Content-Type' => 'application/json' ),
+                'body'    => wp_json_encode( $rerank_body ),
+                'timeout' => 15
+            ) );
+
+            if ( ! is_wp_error( $rerank_response ) && 200 === wp_remote_retrieve_response_code( $rerank_response ) ) {
+                $r_data = json_decode( wp_remote_retrieve_body( $rerank_response ), true );
+                if ( ! empty( $r_data['results'] ) ) {
+                    foreach ( $r_data['results'] as $res ) {
+                        // $res['index'] maps to $docs_for_rerank index
+                        $reranked_indices[] = array(
+                            'index' => $res['index'],
+                            'score' => isset($res['relevance_score']) ? $res['relevance_score'] : 0
+                        );
+                    }
+                }
+            }
+        }
+
+        // If rerank fails, fallback to RRF order
+        if ( empty( $reranked_indices ) ) {
+            foreach ( $docs_for_rerank as $i => $doc ) {
+                $reranked_indices[] = array( 'index' => $i, 'score' => 1 );
+            }
+        }
+
+        // 5. Build Final Context using Parent Chunks
+        $final_chunks = array();
+        $seen_parents = array();
+
+        foreach ( $reranked_indices as $r ) {
+            if ( count( $final_chunks ) >= $k ) break;
+            
+            $orig_index = $r['index'];
+            $chunk_id = $top_rrf_ids[ $orig_index ];
+            $chunk = $chunks_map[ $chunk_id ];
+            
+            $parent_content = !empty($chunk['parent_content']) ? $chunk['parent_content'] : $chunk['content'];
+            
+            // Deduplicate: if we already included this parent chunk, skip it to save tokens
+            $hash = md5($parent_content);
+            if ( isset( $seen_parents[$hash] ) ) continue;
+            
+            $seen_parents[$hash] = true;
+            $final_chunks[] = array(
+                'content'       => $parent_content,
+                'document_name' => $chunk['document_name'],
+                'similarity'    => $r['score']
+            );
+        }
+
+        return $final_chunks;
     }
 
     /**

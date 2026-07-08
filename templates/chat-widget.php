@@ -116,7 +116,7 @@ $widget_id = $is_inline ? 'ai_chatbot-chat-inline' : 'ai_chatbot-chat-floating';
             <div class="ai_chatbot-chat-input-area ai_chatbot-hidden" id="<?php echo esc_attr($widget_id); ?>-input-area" style="display: none;">
                 <form class="ai_chatbot-chat-form" id="<?php echo esc_attr($widget_id); ?>-form" autocomplete="off">
                     <input type="text" class="ai_chatbot-input-field" id="<?php echo esc_attr($widget_id); ?>-input"
-                        placeholder="Nhập tin nhắn..." aria-label="Type message" disabled>
+                        placeholder="Type your message" aria-label="Type message" disabled>
                     <button type="submit" class="ai_chatbot-btn-send" id="<?php echo esc_attr($widget_id); ?>-submit"
                         aria-label="Send message" disabled>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
@@ -126,14 +126,13 @@ $widget_id = $is_inline ? 'ai_chatbot-chat-inline' : 'ai_chatbot-chat-floating';
                         </svg>
                     </button>
                 </form>
-
-                <!-- Takeover Suggestion (Hidden by default) -->
-                <div class="ai_chatbot-takeover-banner" id="<?php echo esc_attr($widget_id); ?>-takeover-banner" style="display: none;">
-                    <button type="button" class="ai_chatbot-btn-takeover">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-                        Trò chuyện với nhân viên tư vấn?
-                    </button>
-                </div>
+            </div>
+            
+            <!-- Takeover Suggestion (Hidden by default) -->
+            <div class="ai_chatbot-takeover-banner" id="<?php echo esc_attr($widget_id); ?>-takeover-banner" style="display: none;">
+                <button type="button" class="ai_chatbot-btn-takeover">
+                    Chat với nhân viên tư vấn
+                </button>
             </div>
         </div>
 
