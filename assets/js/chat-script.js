@@ -389,33 +389,38 @@ jQuery(document).ready(function($) {
                 }).then(async response => {
                     if (!response.ok) throw new Error('Network response was not ok');
                     
-                    removeTypingIndicator();
-                    
                     var reader = response.body.getReader();
                     var decoder = new TextDecoder("utf-8");
                     var fullAnswer = "";
                     var currentBoxHTML = "";
                     var currentMsgBubble = null;
+                    var streamBuffer = ""; // Buffer to hold incomplete lines
                     
                     while (true) {
                         const { done, value } = await reader.read();
                         if (done) break;
                         
                         var chunk = decoder.decode(value, { stream: true });
+                        streamBuffer += chunk;
+                        
                         try {
-                            var parsedJson = JSON.parse(chunk.trim());
+                            var parsedJson = JSON.parse(streamBuffer.trim());
                             if (parsedJson.success === false && parsedJson.data && parsedJson.data.message) {
+                                if (!currentMsgBubble) removeTypingIndicator();
                                 appendMessage('<p style="color: #ef4444; font-weight: 500;">Lỗi: ' + parsedJson.data.message + '</p>', 'bot', true, '', 'ai');
                                 fullAnswer = "[Lỗi hệ thống]";
                                 break;
                             } else if (parsedJson.error && parsedJson.error.message) {
+                                if (!currentMsgBubble) removeTypingIndicator();
                                 appendMessage('<p style="color: #ef4444; font-weight: 500;">Lỗi AI Model: ' + parsedJson.error.message + '</p>', 'bot', true, '', 'ai');
                                 fullAnswer = "[Lỗi AI Model]";
                                 break;
                             }
                         } catch (e) {}
                         
-                        var lines = chunk.split('\n');
+                        var lines = streamBuffer.split('\n');
+                        streamBuffer = lines.pop(); // The last element is an incomplete line, put it back in the buffer
+                        
                         for (var i = 0; i < lines.length; i++) {
                             var line = lines[i].trim();
                             if (line.startsWith('data: ')) {
@@ -423,6 +428,7 @@ jQuery(document).ready(function($) {
                                 if (dataStr === '[DONE]') continue;
                                 if (dataStr.startsWith('[ERROR]')) {
                                     if (!currentMsgBubble) {
+                                        removeTypingIndicator();
                                         appendMessage('<p style="color: #ef4444; font-weight: 500;">' + dataStr + '</p>', 'bot', true, '', 'ai');
                                         currentMsgBubble = messagesViewport.find('.ai_chatbot-msg-wrapper.bot:not(.ai_chatbot-typing-loader):last .ai_chatbot-msg-bubble');
                                     }
@@ -438,6 +444,7 @@ jQuery(document).ready(function($) {
                                         currentBoxHTML = parseMarkdown(fullAnswer);
                                         
                                         if (!currentMsgBubble) {
+                                            removeTypingIndicator();
                                             appendMessage('', 'bot', false, '', 'ai');
                                             currentMsgBubble = messagesViewport.find('.ai_chatbot-msg-wrapper.bot:not(.ai_chatbot-typing-loader):last .ai_chatbot-msg-bubble');
                                         }
@@ -448,6 +455,10 @@ jQuery(document).ready(function($) {
                                 } catch (err) {}
                             }
                         }
+                    }
+                    
+                    if (!currentMsgBubble) {
+                        removeTypingIndicator();
                     }
                     
                     inputField.prop('disabled', false).focus();

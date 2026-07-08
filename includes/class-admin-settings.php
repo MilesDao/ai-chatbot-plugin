@@ -617,7 +617,7 @@ NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
                                         <!-- Hidden detail row -->
                                         <tr class="ai_chatbot-conv-detail" data-conv-id="<?php echo esc_attr( $conv['id'] ); ?>" data-session-id="<?php echo esc_attr( $conv['session_id'] ); ?>" style="display:none;">
                                             <td colspan="6" style="padding: 0;">
-                                                <div style="background: #f8fafc; border-radius: 8px; margin: 8px; overflow: hidden; border: 1px solid #e2e8f0; max-width: 800px; margin-left: auto; margin-right: auto;">
+                                                <div style="background: #f8fafc; border-radius: 8px; margin: 8px; overflow: hidden; border: 1px solid #e2e8f0; max-width: 1000px; margin-left: auto; margin-right: auto; display: flex; flex-direction: column;">
                                                     <div style="padding: 12px 16px; background: #ffffff; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
                                                         <div style="font-weight: 600; color: #0f172a; font-size: 14px;">
                                                             Trò chuyện trực tiếp
@@ -628,14 +628,26 @@ NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
                                                         <button class="ai_chatbot-btn-close-conv btn-view" style="color: #64748b;" data-conv-id="<?php echo esc_attr( $conv['id'] ); ?>">Đóng</button>
                                                     </div>
                                                     
-                                                    <!-- Single Unified Chat Stream -->
-                                                    <div id="ai_chatbot-conv-log-unified-<?php echo esc_attr( $conv['id'] ); ?>" style="height: 400px; overflow-y: auto; padding: 16px; background: #f8fafc; display: flex; flex-direction: column;">
-                                                        <p style="text-align:center; color:#94a3b8; font-size:13px; margin: auto;">Đang tải...</p>
-                                                    </div>
-                                                    
-                                                    <div style="padding: 12px; border-top: 1px solid #e2e8f0; background: #ffffff; display: flex; gap: 8px;">
-                                                        <input type="text" class="ai_chatbot-admin-reply-input" id="ai_chatbot-admin-reply-<?php echo esc_attr( $conv['id'] ); ?>" placeholder="Nhập phản hồi với tư cách nhân viên..." style="flex: 1; border: 1px solid #cbd5e1; padding: 10px 14px; border-radius: 6px; font-size: 13px;">
-                                                        <button class="ai_chatbot-btn-admin-send" data-conv-id="<?php echo esc_attr( $conv['id'] ); ?>" data-session-id="<?php echo esc_attr( $conv['session_id'] ); ?>" style="background: #0ea5e9; color: white; border: none; padding: 0 20px; border-radius: 6px; font-weight: 600; cursor: pointer; transition: 0.2s;">Gửi</button>
+                                                    <div style="display: flex; flex-direction: row; height: 450px;">
+                                                        <!-- Left: AI Chat -->
+                                                        <div style="flex: 1; border-right: 1px solid #e2e8f0; display: flex; flex-direction: column;">
+                                                            <div style="padding: 10px; background: #f1f5f9; font-weight: 600; font-size: 13px; text-align: center; border-bottom: 1px solid #e2e8f0;">Lịch sử Chat với AI</div>
+                                                            <div id="ai_chatbot-conv-log-ai-<?php echo esc_attr( $conv['id'] ); ?>" style="flex: 1; overflow-y: auto; padding: 16px; background: #ffffff; display: flex; flex-direction: column;">
+                                                                <p style="text-align:center; color:#94a3b8; font-size:13px; margin: auto;">Đang tải...</p>
+                                                            </div>
+                                                        </div>
+                                                        
+                                                        <!-- Right: Human Chat -->
+                                                        <div style="flex: 1; display: flex; flex-direction: column;">
+                                                            <div style="padding: 10px; background: #e0e7ff; font-weight: 600; font-size: 13px; text-align: center; border-bottom: 1px solid #e2e8f0;">Nhân viên hỗ trợ</div>
+                                                            <div id="ai_chatbot-conv-log-human-<?php echo esc_attr( $conv['id'] ); ?>" style="flex: 1; overflow-y: auto; padding: 16px; background: #f8fafc; display: flex; flex-direction: column;">
+                                                                <p style="text-align:center; color:#94a3b8; font-size:13px; margin: auto;">Đang tải...</p>
+                                                            </div>
+                                                            <div style="padding: 12px; border-top: 1px solid #e2e8f0; background: #ffffff; display: flex; gap: 8px;">
+                                                                <input type="text" class="ai_chatbot-admin-reply-input" id="ai_chatbot-admin-reply-<?php echo esc_attr( $conv['id'] ); ?>" placeholder="Nhập phản hồi với tư cách nhân viên..." style="flex: 1; border: 1px solid #cbd5e1; padding: 10px 14px; border-radius: 6px; font-size: 13px;">
+                                                                <button class="ai_chatbot-btn-admin-send" data-conv-id="<?php echo esc_attr( $conv['id'] ); ?>" data-session-id="<?php echo esc_attr( $conv['session_id'] ); ?>" style="background: #0ea5e9; color: white; border: none; padding: 0 20px; border-radius: 6px; font-weight: 600; cursor: pointer; transition: 0.2s;">Gửi</button>
+                                                            </div>
+                                                        </div>
                                                     </div>
                                                 </div>
                                             </td>
@@ -726,16 +738,26 @@ NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
                             nonce: '<?php echo wp_create_nonce("ai_chatbot_admin_nonce"); ?>'
                         }, function(response) {
                             if (response.success && response.data.messages) {
-                                var html = '';
+                                var aiHtml = '';
+                                var humanHtml = '';
+                                
                                 $.each(response.data.messages, function(i, msg) {
-                                    html += renderUnifiedMsg(msg);
+                                    if (msg.chat_type === 'ai') {
+                                        aiHtml += renderUnifiedMsg(msg);
+                                    } else {
+                                        humanHtml += renderUnifiedMsg(msg);
+                                    }
                                 });
                                 
-                                var container = $('#ai_chatbot-conv-log-unified-' + convId);
-                                container.html(html || '<p style="text-align:center; color:#94a3b8; font-size:13px; margin: auto;">Không có tin nhắn</p>');
+                                var aiContainer = $('#ai_chatbot-conv-log-ai-' + convId);
+                                var humanContainer = $('#ai_chatbot-conv-log-human-' + convId);
+                                
+                                aiContainer.html(aiHtml || '<p style="text-align:center; color:#94a3b8; font-size:13px; margin: auto;">Chưa có hội thoại AI</p>');
+                                humanContainer.html(humanHtml || '<p style="text-align:center; color:#94a3b8; font-size:13px; margin: auto;">Chưa có tin nhắn hỗ trợ</p>');
                                 
                                 if (forceScroll) {
-                                    container.scrollTop(container[0].scrollHeight);
+                                    aiContainer.scrollTop(aiContainer[0].scrollHeight);
+                                    humanContainer.scrollTop(humanContainer[0].scrollHeight);
                                 }
                             }
                         });

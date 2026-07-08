@@ -247,7 +247,7 @@ class AI_Chatbot_Chatbot {
             
             if ( $conversation ) {
                 $messages_db = $wpdb->get_results( $wpdb->prepare(
-                    "SELECT role, content FROM $table_messages WHERE conversation_id = %d ORDER BY created_at DESC LIMIT 10",
+                    "SELECT role, content FROM $table_messages WHERE conversation_id = %d AND chat_type = 'ai' ORDER BY created_at DESC LIMIT 10",
                     $conversation->id
                 ) );
                 

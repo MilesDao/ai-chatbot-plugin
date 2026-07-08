@@ -47,7 +47,7 @@ class AI_Chatbot_Manager {
         // 2. Chunk the text
         $chunk_size    = intval( get_option( 'ai_chatbot_chunk_size', '1000' ) );
         $chunk_overlap = intval( get_option( 'ai_chatbot_chunk_overlap', '200' ) );
-        $chunks        = $this->chunk_text( $text, $chunk_size, $chunk_overlap );
+        $chunks        = $this->chunk_text( $text, $file_name, $chunk_size, $chunk_overlap );
 
         if ( empty( $chunks ) ) {
             return new WP_Error( 'chunking_failed', 'Failed to chunk the document contents.' );
@@ -194,101 +194,111 @@ class AI_Chatbot_Manager {
     }
 
     /**
-     * Splits long text into Parent-Child overlapping chunks for Hybrid RAG.
+     * Splits long text into chunks using Recursive Character Text Splitter algorithm.
      *
      * @param string $text Raw text.
      * @param string $doc_name Name of the document for metadata enrichment.
+     * @param int $chunk_size Maximum size of each chunk (in characters).
+     * @param int $chunk_overlap Size of overlap between chunks (in characters).
      * @return array List of chunk objects ['child' => '...', 'parent' => '...'].
      */
-    private function chunk_text( $text, $doc_name = '' ) {
-        // Clean white spaces but preserve single newlines
+    private function chunk_text( $text, $doc_name = '', $chunk_size = 1000, $chunk_overlap = 200 ) {
+        // Clean excessive white spaces but preserve single newlines
         $text = preg_replace( '/[ \t]+/u', ' ', $text );
         
-        // Split text into paragraphs/sentences
-        $parts = preg_split('/(\n\n|\.)/u', $text, -1, PREG_SPLIT_DELIM_CAPTURE | PREG_SPLIT_NO_EMPTY);
+        $separators = array( "\n\n", "\n", ". ", " " );
+        $raw_chunks = $this->recursive_split( $text, $chunk_size, $chunk_overlap, $separators );
         
-        $sentences = array();
-        $temp = "";
-        foreach ( $parts as $part ) {
-            $temp .= $part;
-            if ( $part === "\n\n" || $part === "." ) {
-                if ( ! empty( trim( $temp ) ) ) {
-                    $sentences[] = trim( $temp );
-                }
-                $temp = "";
-            }
-        }
-        if ( ! empty( trim( $temp ) ) ) {
-            $sentences[] = trim( $temp );
-        }
-        
-        $parent_size = 1500; // ~ 1500 characters
-        $child_size = 400;   // ~ 400 characters
-        $overlap = 100;      // ~ 100 characters
-
         $chunks = array();
-        $current_parent = "";
-        $parent_sentences = array();
-        
-        // Generate Parent chunks first
-        $parents = array();
-        foreach ( $sentences as $sentence ) {
-            if ( empty( $current_parent ) ) {
-                $current_parent = $sentence;
-                $parent_sentences = array($sentence);
-            } elseif ( mb_strlen( $current_parent ) + mb_strlen( $sentence ) + 1 <= $parent_size ) {
-                $current_parent .= " " . $sentence;
-                $parent_sentences[] = $sentence;
-            } else {
-                $parents[] = array( 'text' => $current_parent, 'sentences' => $parent_sentences );
-                $current_parent = $sentence;
-                $parent_sentences = array($sentence);
-            }
-        }
-        if ( ! empty( $current_parent ) ) {
-            $parents[] = array( 'text' => $current_parent, 'sentences' => $parent_sentences );
-        }
-        
-        // Generate Child chunks with overlap
-        foreach ( $parents as $parent ) {
-            $p_text = $parent['text'];
-            $p_sentences = $parent['sentences'];
+        foreach ( $raw_chunks as $chunk_text ) {
+            $chunk_text = trim( $chunk_text );
+            if ( empty( $chunk_text ) ) continue;
             
-            $current_child = "";
-            foreach ( $p_sentences as $sentence ) {
-                if ( empty( $current_child ) ) {
-                    $current_child = $sentence;
-                } elseif ( mb_strlen( $current_child ) + mb_strlen( $sentence ) + 1 <= $child_size ) {
-                    $current_child .= " " . $sentence;
-                } else {
-                    // Enrich metadata
-                    $child_enriched = "Tên tài liệu: " . $doc_name . "\nNội dung: " . $current_child;
-                    $chunks[] = array(
-                        'child' => $child_enriched,
-                        'parent' => "Tên tài liệu: " . $doc_name . "\nNội dung: " . $p_text
-                    );
-                    
-                    // Overlap: take the last sentence of the previous chunk
-                    $current_child = $sentence;
-                }
-            }
-            if ( ! empty( $current_child ) ) {
-                $child_enriched = "Tên tài liệu: " . $doc_name . "\nNội dung: " . $current_child;
-                $chunks[] = array(
-                    'child' => $child_enriched,
-                    'parent' => "Tên tài liệu: " . $doc_name . "\nNội dung: " . $p_text
-                );
-            }
-        }
-        
-        if ( empty( $chunks ) ) {
+            $enriched = "Tên tài liệu: " . $doc_name . "\nNội dung: " . $chunk_text;
             $chunks[] = array(
-                'child' => "Tên tài liệu: " . $doc_name . "\nNội dung: " . mb_substr( $text, 0, $child_size ),
-                'parent' => "Tên tài liệu: " . $doc_name . "\nNội dung: " . mb_substr( $text, 0, $parent_size )
+                'child' => $enriched,
+                'parent' => $enriched
             );
         }
         
         return $chunks;
+    }
+
+    private function recursive_split( $text, $chunk_size, $chunk_overlap, $separators ) {
+        $final_chunks = array();
+        
+        $separator = $separators[count($separators)-1]; 
+        foreach ( $separators as $s ) {
+            if ( $s === '' || mb_strpos( $text, $s ) !== false ) {
+                $separator = $s;
+                break;
+            }
+        }
+        
+        $splits = array();
+        if ( $separator !== '' ) {
+            $splits = explode( $separator, $text );
+        } else {
+            $splits = preg_split('//u', $text, -1, PREG_SPLIT_NO_EMPTY);
+        }
+        
+        $good_splits = array();
+        foreach ( $splits as $s ) {
+            if ( mb_strlen( $s ) <= $chunk_size ) {
+                $good_splits[] = $s;
+            } else {
+                if ( ! empty( $good_splits ) ) {
+                    $merged = $this->merge_splits( $good_splits, $separator, $chunk_size, $chunk_overlap );
+                    $final_chunks = array_merge( $final_chunks, $merged );
+                    $good_splits = array();
+                }
+                
+                $next_separators = $separators;
+                $idx = array_search( $separator, $separators );
+                if ( $idx !== false && $idx < count($separators) - 1 ) {
+                    $next_separators = array_slice( $separators, $idx + 1 );
+                } else {
+                    $next_separators = array('');
+                }
+                
+                $other_info = $this->recursive_split( $s, $chunk_size, $chunk_overlap, $next_separators );
+                $final_chunks = array_merge( $final_chunks, $other_info );
+            }
+        }
+        
+        if ( ! empty( $good_splits ) ) {
+            $merged = $this->merge_splits( $good_splits, $separator, $chunk_size, $chunk_overlap );
+            $final_chunks = array_merge( $final_chunks, $merged );
+        }
+        
+        return $final_chunks;
+    }
+
+    private function merge_splits( $splits, $separator, $chunk_size, $chunk_overlap ) {
+        $docs = array();
+        $current_doc = array();
+        $total = 0;
+        $sep_len = mb_strlen( $separator );
+        
+        foreach ( $splits as $s ) {
+            $len = mb_strlen( $s );
+            $new_len = $total + $len + ( empty($current_doc) ? 0 : $sep_len );
+            
+            if ( $new_len > $chunk_size && $total > 0 ) {
+                $docs[] = implode( $separator, $current_doc ) . $separator;
+                
+                while ( $total > $chunk_overlap || ( $total + $len + $sep_len > $chunk_size && $total > 0 ) ) {
+                    $removed = array_shift( $current_doc );
+                    $total -= mb_strlen( $removed ) + ( empty($current_doc) ? 0 : $sep_len );
+                }
+            }
+            $current_doc[] = $s;
+            $total += $len + ( count($current_doc) > 1 ? $sep_len : 0 );
+        }
+        if ( $total > 0 ) {
+            $docs[] = implode( $separator, $current_doc );
+        }
+        return $docs;
     }
 
     /**

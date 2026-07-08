@@ -130,6 +130,19 @@
     height: 500px !important;
 }
 
+/* Views */
+.ai_chatbot-view {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 !important;
+    overflow: hidden !important;
+    height: 100% !important;
+}
+
+.ai_chatbot-chatbot-container .ai_chatbot-view.ai_chatbot-hidden {
+    display: none !important;
+}
+
 /* Chat Header */
 .ai_chatbot-chat-header {
     padding: 14px 18px !important;
@@ -291,15 +304,15 @@
 }
 
 .bot .ai_chatbot-msg-bubble {
-    background: #0ea5e9 !important;
-    color: #ffffff !important;
+    background: #f1f5f9 !important;
+    color: #0f172a !important;
     border: none !important;
     border-top-left-radius: 4px !important;
 }
 
 .user .ai_chatbot-msg-bubble {
-    background: #f1f5f9 !important;
-    color: #0f172a !important;
+    background: #0ea5e9 !important;
+    color: #ffffff !important;
     border-top-right-radius: 4px !important;
 }
 
