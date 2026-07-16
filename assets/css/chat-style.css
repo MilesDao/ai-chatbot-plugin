@@ -291,8 +291,8 @@
     padding: 14px 18px !important;
     border-radius: 16px !important;
     box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04) !important;
-    width: fit-content !important;
-    max-width: 92% !important;
+    width: max-content !important;
+    max-width: 100% !important;
 }
 
 .ai_chatbot-msg-bubble>p,
@@ -303,6 +303,9 @@
     background: transparent !important;
     color: inherit !important;
     border: none !important;
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
+    white-space: pre-wrap !important;
 }
 
 .ai_chatbot-msg-bubble>*:last-child {

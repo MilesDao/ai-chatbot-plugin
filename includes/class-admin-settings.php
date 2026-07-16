@@ -613,31 +613,16 @@ QUY TẮC:
                                                     <div style="padding: 12px 16px; background: #ffffff; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
                                                         <div style="font-weight: 600; color: #0f172a; font-size: 14px;">
                                                             Trò chuyện trực tiếp
-                                                            <?php if ($conv['status'] === 'human') : ?>
-                                                                <span style="background: #ef4444; color: white; padding: 2px 8px; border-radius: 99px; font-size: 11px; margin-left: 8px;">Khách đang đợi</span>
-                                                            <?php endif; ?>
                                                         </div>
                                                         <button class="ai_chatbot-btn-close-conv btn-view" style="color: #64748b;" data-conv-id="<?php echo esc_attr( $conv['id'] ); ?>">Đóng</button>
                                                     </div>
                                                     
                                                     <div style="display: flex; flex-direction: row; height: 450px;">
-                                                        <!-- Left: AI Chat -->
-                                                        <div style="flex: 1; border-right: 1px solid #e2e8f0; display: flex; flex-direction: column;">
+                                                        <!-- AI Chat Only -->
+                                                        <div style="flex: 1; display: flex; flex-direction: column;">
                                                             <div style="padding: 10px; background: #f1f5f9; font-weight: 600; font-size: 13px; text-align: center; border-bottom: 1px solid #e2e8f0;">Lịch sử Chat với AI</div>
                                                             <div id="ai_chatbot-conv-log-ai-<?php echo esc_attr( $conv['id'] ); ?>" style="flex: 1; overflow-y: auto; padding: 16px; background: #ffffff; display: flex; flex-direction: column;">
                                                                 <p style="text-align:center; color:#94a3b8; font-size:13px; margin: auto;">Đang tải...</p>
-                                                            </div>
-                                                        </div>
-                                                        
-                                                        <!-- Right: Human Chat -->
-                                                        <div style="flex: 1; display: flex; flex-direction: column;">
-                                                            <div style="padding: 10px; background: #e0e7ff; font-weight: 600; font-size: 13px; text-align: center; border-bottom: 1px solid #e2e8f0;">Nhân viên hỗ trợ</div>
-                                                            <div id="ai_chatbot-conv-log-human-<?php echo esc_attr( $conv['id'] ); ?>" style="flex: 1; overflow-y: auto; padding: 16px; background: #f8fafc; display: flex; flex-direction: column;">
-                                                                <p style="text-align:center; color:#94a3b8; font-size:13px; margin: auto;">Đang tải...</p>
-                                                            </div>
-                                                            <div style="padding: 12px; border-top: 1px solid #e2e8f0; background: #ffffff; display: flex; gap: 8px;">
-                                                                <input type="text" class="ai_chatbot-admin-reply-input" id="ai_chatbot-admin-reply-<?php echo esc_attr( $conv['id'] ); ?>" placeholder="Nhập phản hồi với tư cách nhân viên..." style="flex: 1; border: 1px solid #cbd5e1; padding: 10px 14px; border-radius: 6px; font-size: 13px;">
-                                                                <button class="ai_chatbot-btn-admin-send" data-conv-id="<?php echo esc_attr( $conv['id'] ); ?>" data-session-id="<?php echo esc_attr( $conv['session_id'] ); ?>" style="background: #0ea5e9; color: white; border: none; padding: 0 20px; border-radius: 6px; font-weight: 600; cursor: pointer; transition: 0.2s;">Gửi</button>
                                                             </div>
                                                         </div>
                                                     </div>
@@ -654,51 +639,7 @@ QUY TẮC:
                 <script>
                 jQuery(document).ready(function($) {
                     
-                    // Polling for waiting customers globally
-                    var originalTitle = document.title;
-                    var flashInterval = null;
-                    var lastWaitingCount = 0;
-                    
-                    function checkWaitingCustomers() {
-                        $.post(ajaxurl, {
-                            action: 'ai_chatbot_check_waiting',
-                            nonce: '<?php echo wp_create_nonce("ai_chatbot_admin_nonce"); ?>'
-                        }, function(response) {
-                            if (response.success && response.data.waiting > 0) {
-                                if (response.data.waiting > lastWaitingCount) {
-                                    // Audio ping (best effort)
-                                    var audio = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
-                                    audio.play().catch(function(e) {});
-                                    
-                                    if (!flashInterval) {
-                                        flashInterval = setInterval(function() {
-                                            document.title = document.title === originalTitle ? '(1) Khách cần hỗ trợ!' : originalTitle;
-                                        }, 1000);
-                                    }
-                                }
-                                lastWaitingCount = response.data.waiting;
-                                $('.ai_chatbot-tab-link[href*="tab=conversations"]').html('Lịch sử hội thoại <span style="background:#ef4444; color:white; border-radius:10px; padding:2px 6px; font-size:10px; margin-left:4px;">' + lastWaitingCount + ' chờ</span>');
-                            } else {
-                                lastWaitingCount = 0;
-                                if (flashInterval) {
-                                    clearInterval(flashInterval);
-                                    flashInterval = null;
-                                    document.title = originalTitle;
-                                }
-                                $('.ai_chatbot-tab-link[href*="tab=conversations"]').html('Lịch sử hội thoại');
-                            }
-                        });
-                    }
-                    setInterval(checkWaitingCustomers, 5000);
-                    checkWaitingCustomers();
 
-                    $(window).focus(function() {
-                        if (flashInterval) {
-                            clearInterval(flashInterval);
-                            flashInterval = null;
-                            document.title = originalTitle;
-                        }
-                    });
 
                     // Load conversation details
                     function renderUnifiedMsg(msg) {

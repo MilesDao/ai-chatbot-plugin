@@ -442,7 +442,7 @@ jQuery(document).ready(function($) {
             
             var innerHtml = '';
             var bubbleHtml = '<div class="ai_chatbot-msg-bubble">' + (isHTML ? bubbleContent : '<p>' + bubbleContent + '</p>') + '</div>';
-            var innerHtml = bubbleHtml + '<span class="ai_chatbot-msg-time">' + timeString + '</span>';
+            var innerHtml = bubbleHtml;
             
             var msgHtml = '<div class="ai_chatbot-msg-wrapper ' + sender + '">' + innerHtml + '</div>';
             messagesViewport.append(msgHtml);

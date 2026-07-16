@@ -108,7 +108,6 @@ $widget_id = $is_inline ? 'ai_chatbot-chat-inline' : 'ai_chatbot-chat-floating';
                     <div class="ai_chatbot-msg-bubble">
                         <p><?php echo esc_html($welcome_msg); ?></p>
                     </div>
-                    <span class="ai_chatbot-msg-time"><?php echo esc_html(date('H:i')); ?></span>
                 </div>
             </div>
 

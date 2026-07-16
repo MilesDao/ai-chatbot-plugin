@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 // Define Constants
 define( 'AI_CHATBOT_PATH', plugin_dir_path( __FILE__ ) );
 define( 'AI_CHATBOT_URL', plugin_dir_url( __FILE__ ) );
-define( 'AI_CHATBOT_VERSION', '2.1.5' );
+define( 'AI_CHATBOT_VERSION', '2.1.7' );
 
 /**
  * Custom activation routine to create database tables for documents and chunks.
