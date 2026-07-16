@@ -88,6 +88,8 @@ class AI_Chatbot_Manager {
                 continue;
             }
 
+            $metadata_json = isset($chunk_data['metadata']) ? $chunk_data['metadata'] : '{}';
+
             // Save chunk in DB
             $inserted = $wpdb->insert(
                 $table_chunks,
@@ -96,9 +98,10 @@ class AI_Chatbot_Manager {
                     'content'        => $child_content,
                     'parent_content' => $parent_content,
                     'embedding'      => wp_json_encode( $embedding ),
+                    'metadata'       => $metadata_json,
                     'token_count'    => intval( strlen( $child_content ) / 4 ) // rough estimate of tokens
                 ),
-                array( '%d', '%s', '%s', '%s', '%d' )
+                array( '%d', '%s', '%s', '%s', '%s', '%d' )
             );
 
             if ( $inserted ) {
@@ -106,13 +109,23 @@ class AI_Chatbot_Manager {
                 $successful_chunks++;
                 
                 // Prepare vector for Pinecone (only index the child content)
+                $pinecone_metadata = array(
+                    'document_id' => $doc_id,
+                    'content'     => $child_content
+                );
+                
+                // Merge extracted metadata into Pinecone metadata
+                $parsed_meta = json_decode($metadata_json, true);
+                if (is_array($parsed_meta)) {
+                    foreach($parsed_meta as $mk => $mv) {
+                        if (!empty($mv)) $pinecone_metadata[$mk] = $mv;
+                    }
+                }
+
                 $pinecone_vectors[] = array(
                     'id'     => strval( $chunk_id ),
                     'values' => $embedding,
-                    'metadata' => array(
-                        'document_id' => $doc_id,
-                        'content'     => $child_content
-                    )
+                    'metadata' => $pinecone_metadata
                 );
             }
         }
@@ -203,22 +216,78 @@ class AI_Chatbot_Manager {
      * @return array List of chunk objects ['child' => '...', 'parent' => '...'].
      */
     private function chunk_text( $text, $doc_name = '', $chunk_size = 1000, $chunk_overlap = 200 ) {
-        // Clean excessive white spaces but preserve single newlines
+        // Semantic Pre-processing (V2.0)
+        // Identify common topics and add metadata
         $text = preg_replace( '/[ \t]+/u', ' ', $text );
-        
-        $separators = array( "\n\n", "\n", ". ", " " );
-        $raw_chunks = $this->recursive_split( $text, $chunk_size, $chunk_overlap, $separators );
+        $lines = explode("\n", $text);
         
         $chunks = array();
-        foreach ( $raw_chunks as $chunk_text ) {
-            $chunk_text = trim( $chunk_text );
-            if ( empty( $chunk_text ) ) continue;
+        $current_chunk = "";
+        $current_topic = "";
+        $current_major = "";
+        $current_year = "2026";
+        
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if (empty($line)) continue;
             
-            $enriched = "Tên tài liệu: " . $doc_name . "\nNội dung: " . $chunk_text;
-            $chunks[] = array(
-                'child' => $enriched,
-                'parent' => $enriched
-            );
+            // Heuristic detection for Major
+            if (preg_match('/(?:Ngành|Chuyên ngành)\s*[:\-]?\s*(.*)/ui', $line, $matches)) {
+                $current_major = trim($matches[1]);
+            }
+            if (preg_match('/Mã\s*ngành\s*[:\-]?\s*([A-Z0-9]+)/ui', $line, $matches)) {
+                if (empty($current_major)) $current_major = trim($matches[1]);
+            }
+            
+            // Heuristic detection for Topics (Headings)
+            if (preg_match('/^(Học phí|Điểm chuẩn|Chỉ tiêu|Học bổng|Phương thức xét tuyển|Tổ hợp xét tuyển|Chương trình đào tạo)[:\-\.]?(.*)/ui', $line, $matches)) {
+                // If we hit a new topic, and current chunk is big enough, we save it.
+                if (mb_strlen($current_chunk) > 50) {
+                    $metadata = wp_json_encode(array(
+                        'topic' => $current_topic,
+                        'major' => $current_major,
+                        'year' => $current_year
+                    ));
+                    
+                    $enriched = "Tên tài liệu: " . $doc_name . "\nNội dung: " . trim($current_chunk);
+                    $chunks[] = array(
+                        'child' => $enriched,
+                        'parent' => $enriched,
+                        'metadata' => $metadata
+                    );
+                    $current_chunk = "";
+                }
+                $current_topic = mb_strtolower(trim($matches[1]), 'UTF-8');
+            }
+            
+            $current_chunk .= $line . "\n";
+            
+            // Fallback if chunk gets too large (exceeds chunk_size)
+            if (mb_strlen($current_chunk) > $chunk_size) {
+                // Do the standard recursive split on this piece
+                $sub_chunks = $this->recursive_split($current_chunk, $chunk_size, $chunk_overlap, array(". ", "\n", " "));
+                foreach ($sub_chunks as $sc) {
+                    $metadata = wp_json_encode(array(
+                        'topic' => $current_topic,
+                        'major' => $current_major,
+                        'year' => $current_year
+                    ));
+                    $enriched = "Tên tài liệu: " . $doc_name . "\nNội dung: " . trim($sc);
+                    $chunks[] = array('child' => $enriched, 'parent' => $enriched, 'metadata' => $metadata);
+                }
+                $current_chunk = "";
+            }
+        }
+        
+        // Add remaining chunk
+        if (mb_strlen(trim($current_chunk)) > 0) {
+            $metadata = wp_json_encode(array(
+                'topic' => $current_topic,
+                'major' => $current_major,
+                'year' => $current_year
+            ));
+            $enriched = "Tên tài liệu: " . $doc_name . "\nNội dung: " . trim($current_chunk);
+            $chunks[] = array('child' => $enriched, 'parent' => $enriched, 'metadata' => $metadata);
         }
         
         return $chunks;
@@ -308,7 +377,7 @@ class AI_Chatbot_Manager {
      * @param int $k Number of chunks to return.
      * @return array Array of associative arrays containing chunks: [ 'content', 'document_name', 'similarity' ]
      */
-    public function search_similar_chunks( $query, $k = 3, $threshold = 0.75 ) {
+    public function search_similar_chunks( $query, $k = 3, $threshold = 0.3 ) {
         global $wpdb;
 
         $api_key = get_option( 'ai_chatbot_openrouter_api_key', '' );
@@ -316,12 +385,13 @@ class AI_Chatbot_Manager {
             return array();
         }
 
-        $fetch_count = $k * 3;
+        $fetch_count = $k * 4; // fetch more candidates for better filtering
         $table_chunks = $wpdb->prefix . 'ai_chatbot_chunks';
         $table_docs   = $wpdb->prefix . 'ai_chatbot_documents';
 
         // 1. DENSE RETRIEVAL (Pinecone or DB fallback)
-        $dense_results = array();
+        $dense_results = array(); // chunk_id => score
+        $dense_scores_map = array(); // preserve original dense scores
         $chat_model     = get_option( 'ai_chatbot_openrouter_model' );
         if ( empty( $chat_model ) ) $chat_model = 'deepseek/deepseek-v4-flash';
         $embed_model    = get_option( 'ai_chatbot_openrouter_embed_model' );
@@ -348,8 +418,10 @@ class AI_Chatbot_Manager {
                 if ( ! empty( $body_data['matches'] ) ) {
                     foreach ( $body_data['matches'] as $match ) {
                         $chunk_id = intval( $match['id'] );
+                        $score = isset( $match['score'] ) ? floatval( $match['score'] ) : 0;
                         if ( $chunk_id > 0 ) {
                             $dense_results[] = $chunk_id;
+                            $dense_scores_map[ $chunk_id ] = $score;
                         }
                     }
                 }
@@ -395,6 +467,16 @@ class AI_Chatbot_Manager {
             $rrf_scores[ $chunk_id ] += 1 / ( $constant_k + $rank + 1 );
         }
 
+        // Boost chunks that appear in BOTH dense and sparse (intersection bonus)
+        foreach ( $rrf_scores as $chunk_id => &$score ) {
+            $in_dense = in_array( $chunk_id, $dense_results );
+            $in_sparse = in_array( $chunk_id, $sparse_results );
+            if ( $in_dense && $in_sparse ) {
+                $score *= 1.5; // 50% boost for appearing in both retrieval methods
+            }
+        }
+        unset( $score );
+
         if ( empty( $rrf_scores ) ) {
             return array();
         }
@@ -405,7 +487,7 @@ class AI_Chatbot_Manager {
 
         // Fetch chunk data from DB
         $db_chunks = $wpdb->get_results( "
-            SELECT c.id, c.content, c.parent_content, d.name as document_name 
+            SELECT c.id, c.content, c.parent_content, c.metadata, d.name as document_name 
             FROM $table_chunks c
             JOIN $table_docs d ON c.document_id = d.id
             WHERE c.id IN ($ids_str)
@@ -461,11 +543,18 @@ class AI_Chatbot_Manager {
             }
         }
 
-        // If rerank fails, fallback to RRF order
+        // If reranker disabled or failed: use RRF order WITH actual similarity scores
         if ( empty( $reranked_indices ) ) {
             foreach ( $docs_for_rerank as $i => $doc ) {
-                $reranked_indices[] = array( 'index' => $i, 'score' => 1 );
+                $chunk_id = $top_rrf_ids[ $i ];
+                // Use actual Pinecone score if available, otherwise use RRF score
+                $actual_score = isset( $dense_scores_map[ $chunk_id ] ) ? $dense_scores_map[ $chunk_id ] : $rrf_scores[ $chunk_id ];
+                $reranked_indices[] = array( 'index' => $i, 'score' => $actual_score );
             }
+            // Sort by actual score descending
+            usort( $reranked_indices, function( $a, $b ) {
+                return $b['score'] <=> $a['score'];
+            });
         }
 
         // 5. Build Final Context using Parent Chunks
@@ -475,8 +564,14 @@ class AI_Chatbot_Manager {
         foreach ( $reranked_indices as $r ) {
             if ( count( $final_chunks ) >= $k ) break;
             
+            // Skip low-relevance chunks when reranker is off (noise filter)
+            $enable_reranker_check = get_option( 'ai_chatbot_enable_reranker', '1' );
+            if ( '1' !== $enable_reranker_check && $r['score'] < $threshold ) continue;
+            
             $orig_index = $r['index'];
+            if ( ! isset( $top_rrf_ids[ $orig_index ] ) ) continue;
             $chunk_id = $top_rrf_ids[ $orig_index ];
+            if ( ! isset( $chunks_map[ $chunk_id ] ) ) continue;
             $chunk = $chunks_map[ $chunk_id ];
             
             $parent_content = !empty($chunk['parent_content']) ? $chunk['parent_content'] : $chunk['content'];
@@ -489,7 +584,8 @@ class AI_Chatbot_Manager {
             $final_chunks[] = array(
                 'content'       => $parent_content,
                 'document_name' => $chunk['document_name'],
-                'similarity'    => $r['score']
+                'similarity'    => $r['score'],
+                'metadata'      => isset($chunk['metadata']) ? $chunk['metadata'] : ''
             );
         }
 

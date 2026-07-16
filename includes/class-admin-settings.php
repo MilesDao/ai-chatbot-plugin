@@ -107,27 +107,19 @@ class AI_Chatbot_Admin_Settings {
         $require_lead   = get_option( 'ai_chatbot_require_lead_form', '1' );
         $primary_color  = get_option( 'ai_chatbot_primary_color', '#0ea5e9' );
         $welcome_msg    = get_option( 'ai_chatbot_welcome_message', 'Trường Cao đẳng Kinh tế Công nghệ Hà Nội xin chào! Chúng tôi có thể giúp gì cho bạn hôm nay?' );
-        $system_prompt  = get_option( 'ai_chatbot_system_prompt', "HÃY ĐÓNG VAI LÀ \"ANH/CHỊ\" TRONG BAN TƯ VẤN TUYỂN SINH - MỘT NGƯỜI ANH/NGƯỜI CHỊ KHÓA TRÊN SÀNH ĐIỆU, THÂN THIỆN, THẤU HIỂU VÀ CỰC KỲ TÂM LÝ.
+        $default_prompt = "Bạn là Trợ lý Tư vấn Tuyển sinh Cao đẳng Kinh tế Công nghệ Hà Nội (Hateco). Xưng Anh/Chị, gọi người dùng là Em.
 
-Nhiệm vụ của bạn là lắng nghe, giải đáp thắc mắc và định hướng ngành học cho các em học sinh (gọi là \"Em\") dựa TRÊN DUY NHẤT TÀI LIỆU ĐƯỢC CUNG CẤP dưới đây.
-
-[DỮ LIỆU TRƯỜNG HỌC]
+[KHO TRI THỨC]
 {context}
-[/DỮ LIỆU TRƯỜNG HỌC]
+[/KHO TRI THỨC]
 
-CHÂN DUNG & PHONG CÁCH CHAT (PERSONA):
-- Ngôn ngữ: Tự nhiên như người thật đang gõ chat, sử dụng các từ ngữ gần gũi với Gen Z nhưng vẫn giữ sự lịch sự (Ví dụ: \"Hế nhô em\", \"Chill thôi đừng lo nè\", \"Bật mí nha\", \"Chuẩn luôn\", \"Ui ngành này hot lắm á\").
-- Biểu cảm: Luôn đồng cảm với áp lực chọn ngành của học sinh. Biết khen ngợi khi học sinh chia sẻ sở thích cá nhân.
-- Tốc độ thông tin: Không trả lời nguyên một bài văn dài. Hãy ngắt dòng, chia nhỏ ý như đang nhắn tin Messenger/Zalo.
-
-QUY TẮC SỬ DỤNG EMOJI (ICON):
-- Mỗi tin nhắn chỉ dùng từ 2 - 4 emoji. Không lạm dụng icon ở mọi đầu dòng khiến rối mắt.
-- Sử dụng các icon mang tính biểu cảm, định hướng visual tốt: ✨ (nhấn mạnh điểm đặc biệt), 💡 (khi đưa ra giải pháp/gợi ý), 🎯 (mục tiêu/ngành phù hợp), 🤔 (khi cùng suy nghĩ), 🙌 hoặc 💖 (động viên/chào hỏi).
-
-NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
-1. Chỉ tư vấn thông tin có trong thẻ [DỮ LIỆU TRƯỜNG HỌC]. Tuyệt đối không tự bịa thông tin bên ngoài.
-2. Nếu dữ liệu không có, hãy trả lời khéo léo: \"Ui, cái này trong tài liệu hiện tại của anh/chị chưa cập nhật rồi 😢. Để anh/chị hỏi lại phòng tuyển sinh rồi nhắn em sau nha, hoặc em nhắn lại số điện thoại để các thầy cô gọi hỗ trợ trực tiếp nhen! 💖\"
-3. Luôn kết thúc bằng một câu hỏi gợi mở để giữ mạch trò chuyện (Ví dụ: \"Em có muốn xem thử lịch học ngành này có nặng không nè?\")." );
+QUY TẮC:
+1. CHỈ dùng thông tin trong [KHO TRI THỨC]. Không bịa số liệu.
+2. Trả lời ngắn gọn, tối đa 3-4 câu cho câu hỏi đơn giản. Liệt kê gạch đầu dòng nếu nhiều mục.
+3. Luôn kết thúc bằng 1 câu hỏi gợi mở để tiếp tục hội thoại.
+4. Nếu không có thông tin: \"Dạ, phần này anh/chị chưa có thông tin chính thức. Em có muốn để lại số điện thoại để phòng đào tạo liên hệ hỗ trợ không ạ?\"
+5. Không giải thích lại câu hỏi. Trả lời thẳng.";
+        $system_prompt  = get_option( 'ai_chatbot_system_prompt', $default_prompt );
         $chunk_size     = get_option( 'ai_chatbot_chunk_size', '1000' );
         $chunk_overlap  = get_option( 'ai_chatbot_chunk_overlap', '200' );
         $top_k          = get_option( 'ai_chatbot_top_k', '3' );
@@ -1154,10 +1146,39 @@ NGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):
         $table_docs   = $wpdb->prefix . 'ai_chatbot_documents';
         $table_chunks = $wpdb->prefix . 'ai_chatbot_chunks';
 
-        // 1. Delete associated chunks first
+        // 1. Fetch chunk IDs to delete from Pinecone
+        $chunk_ids = $wpdb->get_col( $wpdb->prepare( "SELECT id FROM $table_chunks WHERE document_id = %d", $doc_id ) );
+        
+        if ( ! empty( $chunk_ids ) ) {
+            $pinecone_api_key = get_option( 'ai_chatbot_pinecone_api_key', '' );
+            $pinecone_host    = get_option( 'ai_chatbot_pinecone_host', '' );
+            
+            if ( ! empty( $pinecone_api_key ) && ! empty( $pinecone_host ) ) {
+                $host = rtrim( $pinecone_host, '/' );
+                $url = $host . '/vectors/delete';
+                
+                $ids_to_delete = array_map( 'strval', $chunk_ids );
+                
+                $body = array(
+                    'ids' => $ids_to_delete,
+                    'namespace' => ''
+                );
+                
+                wp_remote_post( $url, array(
+                    'headers' => array(
+                        'Api-Key'      => $pinecone_api_key,
+                        'Content-Type' => 'application/json'
+                    ),
+                    'body'    => wp_json_encode( $body ),
+                    'timeout' => 15
+                ) );
+            }
+        }
+
+        // 2. Delete associated chunks from MySQL
         $wpdb->delete( $table_chunks, array( 'document_id' => $doc_id ), array( '%d' ) );
 
-        // 2. Delete parent document record
+        // 3. Delete parent document record
         $wpdb->delete( $table_docs, array( 'id' => $doc_id ), array( '%d' ) );
 
         wp_send_json_success( array( 'message' => 'Xóa tài liệu và khối vector thành công.' ) );

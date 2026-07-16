@@ -3,7 +3,7 @@
  * Plugin Name: AI Chatbot
  * Plugin URI: https://github.com/google-deepmind/ai-chatbot
  * Description: A self-contained AI Chatbot with Retrieval-Augmented Generation (RAG) powered by the Gemini API. Index local files in WordPress MySQL and query them in real-time using a beautiful glassmorphic floating widget.
- * Version: 1.0.8
+ * Version: 2.1.3
  * Author: Dao Trung
  * Text Domain: ai-chatbot
  * Requires at least: 5.8
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 // Define Constants
 define( 'AI_CHATBOT_PATH', plugin_dir_path( __FILE__ ) );
 define( 'AI_CHATBOT_URL', plugin_dir_url( __FILE__ ) );
-define( 'AI_CHATBOT_VERSION', '1.0.8' );
+define( 'AI_CHATBOT_VERSION', '2.1.4' );
 
 /**
  * Custom activation routine to create database tables for documents and chunks.
@@ -50,6 +50,7 @@ function ai_chatbot_activate() {
         content longtext NOT NULL,
         parent_content longtext,
         embedding longtext NOT NULL,
+        metadata longtext,
         token_count int(11) DEFAULT 0,
         created_at datetime DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY  (id),
@@ -62,6 +63,12 @@ function ai_chatbot_activate() {
     $index_check = $wpdb->get_results("SHOW INDEX FROM $table_chunks WHERE Key_name = 'idx_content'");
     if (empty($index_check)) {
         $wpdb->query("ALTER TABLE $table_chunks ADD FULLTEXT idx_content (content)");
+    }
+
+    // Ensure metadata column exists for v2.0
+    $col_check = $wpdb->get_results("SHOW COLUMNS FROM $table_chunks LIKE 'metadata'");
+    if (empty($col_check)) {
+        $wpdb->query("ALTER TABLE $table_chunks ADD metadata longtext AFTER embedding");
     }
 
     // 3. Table for storing collected customer leads (Name, Email, Phone)
@@ -171,9 +178,9 @@ class AI_Chatbot_Chatbot {
         // Enqueue Google Font 'Outfit' for a beautiful premium typography
         wp_enqueue_style( 'ai-chatbot-font', 'https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap', array(), null );
 
-        wp_enqueue_style( 'ai-chatbot-style', AI_CHATBOT_URL . 'assets/css/chat-style.css', array(), time() );
+        wp_enqueue_style( 'ai-chatbot-style', AI_CHATBOT_URL . 'assets/css/chat-style.css', array(), AI_CHATBOT_VERSION );
 
-        wp_enqueue_script( 'ai-chatbot-script', AI_CHATBOT_URL . 'assets/js/chat-script.js', array( 'jquery' ), time(), true );
+        wp_enqueue_script( 'ai-chatbot-script', AI_CHATBOT_URL . 'assets/js/chat-script.js', array( 'jquery' ), AI_CHATBOT_VERSION, true );
 
         // Localize variables to JS (e.g. AJAX url, nonce, UI configuration)
         $primary_color = get_option( 'ai_chatbot_primary_color', '#0ea5e9' ); // Default electric blue
@@ -264,6 +271,49 @@ class AI_Chatbot_Chatbot {
             }
         }
 
+        // ==========================================
+        // PHASE 10: Cache Check
+        // ==========================================
+        $cache_key = 'ai_chat_' . md5( strtolower( trim( $message ) ) . serialize($history) );
+        $cached_response = get_transient( $cache_key );
+        if ( $cached_response !== false ) {
+            // Fake an SSE stream for the cached response
+            header( 'Content-Type: text/event-stream' );
+            header( 'Cache-Control: no-cache' );
+            header( 'Connection: keep-alive' );
+            
+            // Output as a single chunk
+            $data = array(
+                'choices' => array(
+                    array(
+                        'delta' => array(
+                            'content' => $cached_response
+                        )
+                    )
+                )
+            );
+            echo "data: " . wp_json_encode( $data ) . "\n\n";
+            echo "data: [DONE]\n\n";
+            exit;
+        }
+
+        // ==========================================
+        // PHASE 7: Intent Router (Agentic Bypass)
+        // ==========================================
+        $is_small_talk = false;
+        $lower_message = trim( mb_strtolower( $message, 'UTF-8' ) );
+        $chitchat_patterns = array(
+            '/^(xin chào|chào|hello|hi|hey|alo|ê|bạn ơi|có ai không)/i',
+            '/^(cảm ơn|thanks|tks|thank you|cám ơn)/i',
+            '/^(tạm biệt|bye|goodbye)/i'
+        );
+        foreach ( $chitchat_patterns as $pattern ) {
+            if ( preg_match( $pattern, $lower_message ) && mb_strlen( $lower_message, 'UTF-8' ) < 50 ) {
+                $is_small_talk = true;
+                break;
+            }
+        }
+
         // 1. Reformulate Query (Contextual Retrieval)
         $chat_model = get_option( 'ai_chatbot_openrouter_model' );
         if ( empty($chat_model) ) $chat_model = 'deepseek/deepseek-v4-flash';
@@ -274,35 +324,55 @@ class AI_Chatbot_Chatbot {
         $search_query = $message;
         $enable_reformulate = get_option( 'ai_chatbot_enable_reformulate', '1' );
         
-        if ( '1' === $enable_reformulate && ! empty( $history ) ) {
+        if ( ! $is_small_talk && '1' === $enable_reformulate && ! empty( $history ) ) {
             $search_query = $client->reformulate_query( $message, $history );
         }
 
         $rag_manager = new AI_Chatbot_Manager();
         
-        // 2. Fetch relevant chunks from the database/Pinecone
-        $k = intval( get_option( 'ai_chatbot_top_k', '3' ) );
-        $relevant_chunks = $rag_manager->search_similar_chunks( $search_query, $k );
-
-        // 2. Format context from database/Pinecone
         $chunks_text = "";
-        if ( ! empty( $relevant_chunks ) ) {
-            foreach ( $relevant_chunks as $idx => $chunk ) {
-                $doc_name = $chunk['document_name'];
-                $chunks_text .= "Đoạn trích " . ($idx + 1) . " (Tệp nguồn: $doc_name):\n" . $chunk['content'] . "\n\n";
+        
+        if ( ! $is_small_talk ) {
+            // 2. Fetch relevant chunks from the database/Pinecone
+            $k = intval( get_option( 'ai_chatbot_top_k', '3' ) );
+            $relevant_chunks = $rag_manager->search_similar_chunks( $search_query, $k );
+
+            // 2. Format context from database/Pinecone
+            if ( ! empty( $relevant_chunks ) ) {
+                foreach ( $relevant_chunks as $idx => $chunk ) {
+                    $doc_name = $chunk['document_name'];
+                    // Append metadata if it exists
+                    $meta_str = "";
+                    if (isset($chunk['metadata']) && !empty($chunk['metadata'])) {
+                        $meta_str = " (Meta: " . $chunk['metadata'] . ")";
+                    }
+                    $chunks_text .= "Đoạn trích " . ($idx + 1) . " (Tệp nguồn: $doc_name)$meta_str:\n" . $chunk['content'] . "\n\n";
+                }
+            } else {
+                $chunks_text = "Không có tài liệu nào liên quan.";
             }
-        } else {
-            $chunks_text = "Không có tài liệu nào liên quan.";
         }
 
         // Custom system prompt/persona from settings
-        $system_prompt = get_option( 'ai_chatbot_system_prompt', "HÃY ĐÓNG VAI LÀ \"ANH/CHỊ\" TRONG BAN TƯ VẤN TUYỂN SINH - MỘT NGƯỜI ANH/NGƯỜI CHỊ KHÓA TRÊN SÀNH ĐIỆU, THÂN THIỆN, THẤU HIỂU VÀ CỰC KỲ TÂM LÝ.\n\nNhiệm vụ của bạn là lắng nghe, giải đáp thắc mắc và định hướng ngành học cho các em học sinh (gọi là \"Em\") dựa TRÊN DUY NHẤT TÀI LIỆU ĐƯỢC CUNG CẤP dưới đây.\n\n[DỮ LIỆU TRƯỜNG HỌC]\n{context}\n[/DỮ LIỆU TRƯỜNG HỌC]\n\nCHÂN DUNG & PHONG CÁCH CHAT (PERSONA):\n- Ngôn ngữ: Tự nhiên như người thật đang gõ chat, sử dụng các từ ngữ gần gũi với Gen Z nhưng vẫn giữ sự lịch sự.\n- Biểu cảm: Luôn đồng cảm với áp lực chọn ngành của học sinh.\n- Tốc độ thông tin: Không trả lời nguyên một bài văn dài. Hãy ngắt dòng.\n\nNGUYÊN TẮC XỬ LÝ THÔNG TIN (RAG):\n1. Chỉ tư vấn thông tin có trong thẻ [DỮ LIỆU TRƯỜNG HỌC]. Tuyệt đối không tự bịa thông tin bên ngoài.\n2. Nếu dữ liệu không có, hãy trả lời khéo léo: \"Ui, câu hỏi này anh/chị chưa có thông tin chính thức rồi 😢. Để anh/chị hỏi lại phòng đào tạo rồi báo em sau nha!\"\n3. Luôn kết thúc bằng một câu hỏi gợi mở để giữ mạch trò chuyện." );
+        $default_prompt = "Bạn là Trợ lý Tư vấn Tuyển sinh Cao đẳng Kinh tế Công nghệ Hà Nội (Hateco). Xưng Anh/Chị, gọi người dùng là Em.
+
+[KHO TRI THỨC]
+{context}
+[/KHO TRI THỨC]
+
+QUY TẮC:
+1. CHỈ dùng thông tin trong [KHO TRI THỨC]. Không bịa số liệu.
+2. Trả lời ngắn gọn, tối đa 3-4 câu cho câu hỏi đơn giản. Liệt kê gạch đầu dòng nếu nhiều mục.
+3. Luôn kết thúc bằng 1 câu hỏi gợi mở để tiếp tục hội thoại.
+4. Nếu không có thông tin: \"Dạ, phần này anh/chị chưa có thông tin chính thức. Em có muốn để lại số điện thoại để phòng đào tạo liên hệ hỗ trợ không ạ?\"
+5. Không giải thích lại câu hỏi. Trả lời thẳng.";
+        $system_prompt = get_option( 'ai_chatbot_system_prompt', $default_prompt );
         
         // Inject context into the prompt
         if ( strpos( $system_prompt, '{context}' ) !== false ) {
             $system_prompt = str_replace( '{context}', $chunks_text, $system_prompt );
         } else {
-            $system_prompt .= "\n\n[DỮ LIỆU TRƯỜNG HỌC]\n" . $chunks_text . "\n[/DỮ LIỆU TRƯỜNG HỌC]";
+            $system_prompt .= "\n\n[KHO TRI THỨC]\n" . $chunks_text . "\n[/KHO TRI THỨC]";
         }
 
         $context_text = $system_prompt;

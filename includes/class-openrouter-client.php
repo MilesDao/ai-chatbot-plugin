@@ -87,9 +87,13 @@ class OpenRouter_API_Client {
 
         $system_instruction = "Bạn là một AI hỗ trợ viết lại câu hỏi. Nhiệm vụ của bạn là dựa vào ngữ cảnh của các tin nhắn trước đó, hãy viết lại câu hỏi mới nhất của người dùng thành một câu hoàn chỉnh, độc lập và rõ ràng ngữ nghĩa, KHÔNG thay đổi ý định của họ. CHỈ trả lời bằng câu đã viết lại, không thêm lời giải thích.";
 
-        $final_message = "Chỉ dẫn hệ thống: " . $system_instruction . "\n\nCâu hỏi của người dùng: " . $message;
-
         $messages = array();
+
+        // Use system role for faster inference
+        $messages[] = array(
+            'role' => 'system',
+            'content' => $system_instruction
+        );
 
         foreach ( $history as $msg ) {
             $messages[] = array(
@@ -100,12 +104,14 @@ class OpenRouter_API_Client {
 
         $messages[] = array(
             'role' => 'user',
-            'content' => $final_message
+            'content' => $message
         );
 
         $body = array(
             'model'       => $this->chat_model,
-            'messages'    => $messages
+            'messages'    => $messages,
+            'temperature' => 0.1,
+            'max_tokens'  => 150
         );
 
         $response = wp_remote_post( $endpoint, array(
@@ -116,7 +122,7 @@ class OpenRouter_API_Client {
                 'X-Title'       => 'WordPress_Chatbot'
             ),
             'body'      => wp_json_encode( $body ),
-            'timeout'   => 15,
+            'timeout'   => 10,
         ) );
 
         if ( is_wp_error( $response ) ) {
@@ -145,11 +151,13 @@ class OpenRouter_API_Client {
      * @return string|WP_Error Generated answer string, or WP_Error.
      */
     public function generate_chat_answer( $message, $system_instruction, $history = array() ) {
-        $endpoint = "{$this->base_url}/chat/completions";
-
-        $final_message = "Chỉ dẫn hệ thống: " . $system_instruction . "\n\nCâu hỏi của người dùng: " . $message;
-
         $messages = array();
+
+        // Use proper system role for context — this is much faster than stuffing in user message
+        $messages[] = array(
+            'role' => 'system',
+            'content' => $system_instruction
+        );
 
         if ( ! empty( $history ) && is_array( $history ) ) {
             foreach ( $history as $msg ) {
@@ -162,14 +170,14 @@ class OpenRouter_API_Client {
 
         $messages[] = array(
             'role' => 'user',
-            'content' => $final_message
+            'content' => $message
         );
 
         $body = array(
             'model' => $this->chat_model,
             'messages' => $messages,
             'temperature' => 0.3,
-            'max_tokens' => 1200
+            'max_tokens' => 500
         );
 
         $response = wp_remote_post( $endpoint, array(
@@ -212,9 +220,13 @@ class OpenRouter_API_Client {
     public function generate_chat_answer_stream( $message, $system_instruction, $history = array() ) {
         $endpoint = "{$this->base_url}/chat/completions";
 
-        $final_message = "Chỉ dẫn hệ thống: " . $system_instruction . "\n\nCâu hỏi của người dùng: " . $message;
-
         $messages = array();
+
+        // Use proper system role — faster inference and better instruction following
+        $messages[] = array(
+            'role' => 'system',
+            'content' => $system_instruction
+        );
 
         if ( ! empty( $history ) && is_array( $history ) ) {
             foreach ( $history as $msg ) {
@@ -227,13 +239,15 @@ class OpenRouter_API_Client {
 
         $messages[] = array(
             'role' => 'user',
-            'content' => $final_message
+            'content' => $message
         );
 
         $body = array(
             'model'       => $this->chat_model,
             'messages'    => $messages,
-            'stream'      => true
+            'stream'      => true,
+            'temperature' => 0.3,
+            'max_tokens'  => 500
         );
 
         $ch = curl_init( $endpoint );

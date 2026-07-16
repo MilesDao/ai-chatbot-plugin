@@ -128,47 +128,8 @@ $widget_id = $is_inline ? 'ai_chatbot-chat-inline' : 'ai_chatbot-chat-floating';
                 </form>
             </div>
             
-            <!-- Takeover Suggestion (Hidden by default) -->
-            <div class="ai_chatbot-takeover-banner" id="<?php echo esc_attr($widget_id); ?>-takeover-banner" style="display: none;">
-                <button type="button" class="ai_chatbot-btn-takeover">
-                    Chat với nhân viên tư vấn
-                </button>
-            </div>
         </div>
 
-        <!-- Main Content Area: Human View -->
-        <div class="ai_chatbot-view ai_chatbot-view-human" id="<?php echo esc_attr($widget_id); ?>-view-human" style="display: none;">
-            <div class="ai_chatbot-human-header-bar">
-                <button type="button" class="ai_chatbot-btn-back-ai" id="<?php echo esc_attr($widget_id); ?>-back-ai">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px; margin-right: 6px;"><polyline points="15 18 9 12 15 6"></polyline></svg>
-                    Quay lại hỏi AI
-                </button>
-            </div>
-            <!-- Human Chat Messages -->
-            <div class="ai_chatbot-chat-messages" id="<?php echo esc_attr($widget_id); ?>-human-messages">
-                <div class="ai_chatbot-msg-wrapper bot">
-                    <div class="ai_chatbot-msg-bubble">
-                        <p>Chào bạn, bạn cần tư vấn thêm thông tin gì ạ? Vui lòng gửi tin nhắn, tư vấn viên sẽ phản hồi ngay.</p>
-                    </div>
-                    <span class="ai_chatbot-msg-time"><?php echo esc_html(date('H:i')); ?></span>
-                </div>
-            </div>
 
-            <!-- Human Input Area -->
-            <div class="ai_chatbot-chat-input-area" id="<?php echo esc_attr($widget_id); ?>-human-input-area">
-                <form class="ai_chatbot-chat-form" id="<?php echo esc_attr($widget_id); ?>-human-form" autocomplete="off">
-                    <input type="text" class="ai_chatbot-input-field" id="<?php echo esc_attr($widget_id); ?>-human-input"
-                        placeholder="Nhắn tin cho tư vấn viên..." aria-label="Type message">
-                    <button type="submit" class="ai_chatbot-btn-send" id="<?php echo esc_attr($widget_id); ?>-human-submit"
-                        aria-label="Send message">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
-                            stroke-linejoin="round">
-                            <line x1="22" y1="2" x2="11" y2="13"></line>
-                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                        </svg>
-                    </button>
-                </form>
-            </div>
-        </div>
     </div>
 </div>
